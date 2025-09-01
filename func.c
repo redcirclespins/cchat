@@ -1,18 +1,22 @@
 #include "func.h"
 
+// ERROR HANDLING
 void error(const char* msg){
+    ERROR;
+    fflush(stdout);
     perror(msg);
     exit(EXIT_FAILURE);
 }
 
 void STDError(const char* msg){
+    ERROR;
+    fflush(stdout);
     fputs(msg,stderr);
-    fputs(" failed",stderr);
     fputc('\n',stderr);
     exit(EXIT_FAILURE);
 }
 
-void ERRGetErrorDep(){ //deprecated
+void ERRGetErrorDep(){ //deprecated!
     unsigned long err_code=ERR_get_error();
     if(err_code)
 	fprintf(stderr,"SSL error: %s\n",ERR_error_string(err_code,NULL));
@@ -88,7 +92,9 @@ void SSLError(const char* msg,const int num,...){
     va_end(free);
     STDError(msg);
 }
+// ERROR HANDLING
 
+// SOCKET FUNCS
 uint16_t validatePort(const char* port_char){
     for(int i=0;port_char[i];i++){
         if(isdigit((unsigned char)port_char[i])==0)
@@ -104,8 +110,8 @@ int createSocket(){
     int FD=socket(AF_INET,SOCK_STREAM,0);
     if(FD==-1)
         error("socket failed");
-    int yes=1;
-    if(setsockopt(FD,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes))==-1)
+    int opt=1;
+    if(setsockopt(FD,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt))==-1)
         error("setsockopt failed");
     return FD;
 }
@@ -128,7 +134,9 @@ void setBlocking(const int FD){
 	if(fcntl(FD,F_SETFL,fcntl(FD,F_GETFL,0)&~O_NONBLOCK)==-1)
         error("fcntl:BLOCKING");
 }
+// SOCKET FUNCS
 
+// MESSAGE HANDLING
 int sanitizeAndVerifyReadInput(char *msg,size_t *msg_len){
     if(msg==NULL||*msg==0)
         return -1;
@@ -149,4 +157,4 @@ int sanitizeAndVerifyReadInput(char *msg,size_t *msg_len){
         return -1;
     return 0;
 }
-
+// MESSAGE HANDLING

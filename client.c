@@ -7,6 +7,26 @@
 typedef struct epoll_event EpollEvent;
 static int send_nickname=1;
 
+static void ASCII(){
+    puts("           _           _");
+    puts("          | |         | |");
+    puts("   ___ ___| |__   __ _| |");
+    puts("  / __/ __| '_ \\ / _` | __|");
+    puts(" | (_| (__| | | | (_| | |");
+    puts("  \\___\\___|_| |_|\\__,_|\\__|");
+    putchar('\n');
+}
+
+static void commands(){
+    puts("available commands:");
+    puts("+---------+--------------------+");
+    puts("| .quit   | quit               |");
+    puts("| .online | check users online |");
+    puts("| .file   | transfer a file    |");
+    puts("+---------+--------------------+");
+    putchar('\n');
+}
+
 static in_addr_t validateIp(const char* ip_char){
     struct in_addr addr;
     if(inet_pton(AF_INET,ip_char,&addr)==0)
@@ -71,6 +91,8 @@ static void handleSSLHandshake(const int FD,SSL_CTX* ctx,SSL* ssl){
 
 int main(int argc,char** argv){
     if(argc!=3){
+        ERROR;
+        fflush(stdout);
         printf("usage: %s <server-ip-address> <port>\n",argv[0]);
         return EXIT_FAILURE;
     }
@@ -78,12 +100,14 @@ int main(int argc,char** argv){
 	//socket
     const in_addr_t ip=validateIp(argv[1]);
     const uint16_t port=validatePort(argv[2]);
+    ASCII();
+    commands();
     const int FD=createSocket();
     struct sockaddr_in addr={0};
     createAddress(&addr,ip,port);
     if(connect(FD,(struct sockaddr*)&addr,(socklen_t)sizeof(addr))==-1)
         error("connect");
-    puts("successfully connected");
+    INFO("successfully connected");
 
 	//epoll
     EpollEvent epollEvent;
@@ -127,7 +151,7 @@ int main(int argc,char** argv){
     const int connect_error=SSL_connect(ssl);
     if(connect_error<=0)
         SSLErrorVerbose(ctx,ssl,"SSL_connect",connect_error);
-    puts("established TLS");
+    INFO("established TLS");
 
 	//main flow
 	if(send_nickname==1){

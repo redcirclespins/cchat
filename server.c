@@ -113,6 +113,8 @@ static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,C
 
 int main(int argc,char** argv){
     if(argc!=2){
+        ERROR;
+        fflush(stdout);
         printf("usage: %s <port>\n",argv[0]);
         return EXIT_FAILURE;
     }
@@ -130,7 +132,7 @@ int main(int argc,char** argv){
         error("bind");
     if(listen(FD,MAXCLIENTS)==-1)
         error("listen");
-    printf("server started on port %u\n",(unsigned)port);
+    INFO("server started on port %u",(unsigned)port);
 
 	//epoll
     EpollEvent epollEvent;

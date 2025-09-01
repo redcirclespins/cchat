@@ -18,11 +18,16 @@
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 
-//+\0
-#define MSGLEN 257
-#define NICKLEN 33
-
+#define MSGLEN     257
+#define NICKLEN    33
 #define NICKLENMIN 5
+
+#define RESET "\033[0m"
+#define RED   "\033[31m"
+#define GREEN "\033[32m"
+
+#define INFO(msg,...) printf("[" GREEN "INFO" RESET "] " msg "\n",##__VA_ARGS__)
+#define ERROR     printf("[" RED "ERROR" RESET "] ")
 
 void error(const char*);
 void STDError(const char*);
