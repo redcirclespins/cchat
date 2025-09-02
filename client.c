@@ -1,5 +1,13 @@
 #include "func.h"
 
+#define CURSORUP    "\033[A"
+#define CURSORDOWN  "\033[B"
+#define CURSORSTART "\r"
+#define CLEARLINE   "\033[K"
+
+#define CMDONLINE 15
+#define CMDFILE   12
+
 #define MAXEVENTS 2
 #define CAPATH NULL
 #define CACERT "cert/cert.pem"
@@ -7,36 +15,62 @@
 typedef struct epoll_event EpollEvent;
 static int send_nickname=1;
 
+static struct termios origTermios;
+static char g_msg[MSGLEN]={0};
+static int g_msg_len=0;
+
+// TERMINAL-NONCANONICAL
 static void ASCII(){
-    puts("           _           _");
-    puts("          | |         | |");
-    puts("   ___ ___| |__   __ _| |");
-    puts("  / __/ __| '_ \\ / _` | __|");
-    puts(" | (_| (__| | | | (_| | |");
+    puts("           _           _       ");
+    puts("          | |         | |		 ");
+    puts("   ___ ___| |__   __ _| |		 ");
+    puts("  / __/ __| '_ \\ / _` | __|	 ");
+    puts(" | (_| (__| | | | (_| | |		 ");
     puts("  \\___\\___|_| |_|\\__,_|\\__|");
     putchar('\n');
 }
 
 static void commands(){
-    puts("available commands:");
-    puts("+---------+--------------------+");
-    puts("| .quit   | quit               |");
-    puts("| .online | check users online |");
-    puts("| .file   | transfer a file    |");
-    puts("+---------+--------------------+");
+    puts("available KEY commands");
+    puts("+---------+-------------------+");
+    puts("| ESC    | quit               |");
+    puts("| CTRL+O | check users online |");
+    puts("| CTRL+F | transfer a file    |");
+    puts("+---------+-------------------+");
     putchar('\n');
 }
 
+static void enableRawMode(){
+	struct termios raw;
+	if(tcgetattr(STDIN_FILENO,&origTermios)==-1)
+        error("tcgetattr");
+	raw=origTermios;
+	raw.c_lflag &= ~(ICANON|ECHO|ISIG);
+	raw.c_cc[VMIN]=1;
+	raw.c_cc[VTIME]=0;
+	if(tcsetattr(STDIN_FILENO,TCSAFLUSH,&raw)==-1)
+        error("tcsetattr");
+}
+
+static void disableRawMode(){
+	if(tcsetattr(STDIN_FILENO,TCSAFLUSH,&origTermios)==-1)
+        error("tcsetattr");
+}
+// TERMINAL-NONCANONICAL
+
+// SOCKET FUNCS
 static in_addr_t validateIp(const char* ip_char){
     struct in_addr addr;
     if(inet_pton(AF_INET,ip_char,&addr)==0)
         STDError("provide valid ipv4 address");
     return addr.s_addr;
 }
+// SOCKET FUNCS
 
+// RECEIVE DATA
 static void receiveData(const int FD,SSL_CTX* ctx,SSL* ssl){
-    char msg[MSGLEN]={0};
-    const ssize_t bytes_read=SSL_read(ssl,msg,sizeof(msg)-1);
+    char msg[BROADCAST]={0};
+    const ssize_t bytes_read=SSL_read(ssl,msg,BROADCAST-1);
 
     if(bytes_read<=0){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
@@ -46,68 +80,65 @@ static void receiveData(const int FD,SSL_CTX* ctx,SSL* ssl){
 	}
 
     msg[bytes_read]=0;
-    printf("\33[2K\r%s\n",msg); //clear the whole line + printf msg
-    //add displaying the unfinished line
+
+	printf("\n");
+    printf(CLEARLINE);
+    printf("%s\n",msg); 
+	
+	printf(CURSORSTART CLEARLINE);
+    fwrite(g_msg,1,g_msg_len,stdout);
     fflush(stdout);
 }
+// RECEIVE DATA
 
+// SEND DATA
 static void handleInput(const int FD,SSL_CTX* ctx,SSL* ssl){
-    char msg[MSGLEN]={0};
+	char c;
+	if(read(STDIN_FILENO,&c,1)<=0)
+		return;
 
-	fgets(msg,send_nickname?NICKLEN:sizeof(msg),stdin);
-    size_t msg_len=strlen(msg);
-    msg[msg_len]=0;
+	if(c=='\n'){
+		if(g_msg_len>0){
+			const ssize_t bytes_write=SSL_write(ssl,g_msg,g_msg_len);
+			if(bytes_write<=0)
+			  SSLErrorVerbose(ctx,ssl,"SSL_write",bytes_write);
+			g_msg_len=0;
+		}
 
-    if(msg[msg_len-1]!='\n'){
-        int c;
-        while((c=getchar())!='\n'&&c!=EOF);
-    }
-    if(sanitizeAndVerifyReadInput(msg,&msg_len)==-1)
-        return;
-    msg[msg_len]=0;
-
-    if(send_nickname==0&&strcmp(msg,".quit")==0){
-        SSL_CTX_free(ctx);
-        SSL_free(ssl);
-        close(FD);
-        exit(0);
-    }
-    const ssize_t bytes_write=SSL_write(ssl,msg,msg_len);
-    if(bytes_write<=0)
-        SSLErrorVerbose(ctx,ssl,"SSL_write",bytes_write);
+		printf("\n--> ");
+		fflush(stdout);
+		send_nickname=0;
+	}else if(c==27){
+		SSL_CTX_free(ctx);
+		SSL_free(ssl);
+		close(FD);
+		exit(0);
+	}else{
+		if(g_msg_len<MSGLEN-1)
+			g_msg[g_msg_len++]=c;
+		fwrite(&c,1,1,stdout);
+        fflush(stdout);
+	}
+	//}else if(c==CMDONLINE){
+	//}else if(c==CMDFILE){
+	//}
 }
-
-/*
-static void handleSSLHandshake(const int FD,SSL_CTX* ctx,SSL* ssl){
-    //SSL_set_connect_state
-    //SSL_set_accept_state
-    int err=SSL_do_handshake(ssl);
-    if(err==1)
-        puts("SSL handshake completed");
-    if(err<=0)
-        SSLErrorVerbose(ctx,ssl,err);
-}
-*/
+// SEND DATA
 
 int main(int argc,char** argv){
     if(argc!=3){
-        ERROR;
-        fflush(stdout);
-        printf("usage: %s <server-ip-address> <port>\n",argv[0]);
+        ERRORSTD("usage: %s <server-ip-address> <port>\n",argv[0]);
         return EXIT_FAILURE;
     }
 
 	//socket
     const in_addr_t ip=validateIp(argv[1]);
     const uint16_t port=validatePort(argv[2]);
-    ASCII();
-    commands();
     const int FD=createSocket();
     struct sockaddr_in addr={0};
     createAddress(&addr,ip,port);
     if(connect(FD,(struct sockaddr*)&addr,(socklen_t)sizeof(addr))==-1)
         error("connect");
-    INFO("successfully connected");
 
 	//epoll
     EpollEvent epollEvent;
@@ -137,30 +168,24 @@ int main(int argc,char** argv){
     SSL* ssl=SSL_new(ctx);
     if(ssl==NULL)
         SSLError("SSL_new",1,ctx);
-
-    /*
-    if(SSL_set_tlsext_host_name(ssl,argv[1])==0)
-        SSLError("SSL_set_tlsext_host_name",2,ctx,ssl);
-    SSL_set_hostflags(ssl,X509_CHECK_FLAG_NO_WILDCARDS);
-    if(SSL_set1_host(ssl,argv[1])==0)
-        SSLError("SSL_set1_host",2,ctx,ssl);
-    */
     
     if(SSL_set_fd(ssl,FD)==0)
         SSLError("SSL_set_fd",2,ctx,ssl);
     const int connect_error=SSL_connect(ssl);
     if(connect_error<=0)
         SSLErrorVerbose(ctx,ssl,"SSL_connect",connect_error);
+
+	enableRawMode();
+	atexit(disableRawMode);
+    ASCII();
+    commands();
+    INFO("successfully connected");
     INFO("established TLS");
+	printf("enter your nickname: ");
+	fflush(stdout);
 
 	//main flow
-	if(send_nickname==1){
-		send_nickname=0;
-		printf("enter your nickname: ");
-		fflush(stdout);
-	}
 	setNonBlocking(FD);
-
     while(1){
         EpollEvent events[MAXEVENTS];
         const int rFDs=epoll_wait(epFD,events,MAXEVENTS,-1);
@@ -168,22 +193,16 @@ int main(int argc,char** argv){
             error("epoll_wait");
 
         for(int i=0;i<rFDs;i++){
-            if(events[i].data.fd==STDIN_FILENO){
-				if(send_nickname==0){
-					printf("--> ");
-					fflush(stdout);
-				}
+            if(events[i].data.fd==STDIN_FILENO)
                 handleInput(FD,ctx,ssl);
-			}else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN))
+			else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)&&!send_nickname)
 	    		receiveData(FD,ctx,ssl);
         }
     }
 
 	//shutdown
-    SSL_shutdown(ssl);
-    SSL_free(ssl);
     SSL_CTX_free(ctx);
+    SSL_free(ssl);
     close(FD);
-
     return 0;
 }

@@ -19,7 +19,7 @@ void STDError(const char* msg){
 void ERRGetErrorDep(){ //deprecated!
     unsigned long err_code=ERR_get_error();
     if(err_code)
-	fprintf(stderr,"SSL error: %s\n",ERR_error_string(err_code,NULL));
+		fprintf(stderr,"SSL error: %s\n",ERR_error_string(err_code,NULL));
 }
 
 void SSLErrorVerbose(SSL_CTX* ctx,SSL *ssl,const char* func,const int ret){
