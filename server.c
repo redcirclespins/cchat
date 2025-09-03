@@ -20,10 +20,10 @@ static ClientSocket clients[MAXCLIENTS]={0};
 
 static int passwordCallback(char* buf,int size,int rwflag,void* userdata){
     char* password=(char*)userdata;
-    if(!password||password[0]==0||size<strlen(password)+1)
+    if(!password||password[0]==0||size<(int)strlen(password)+1)
         return 0;
     strncpy(buf,password,strlen(password)+1);
-    return strlen(password);
+    return (int)strlen(password);
 }
 
 static void sendToOthers(const char* msg,const ClientSocket* senderSocket,SSL_CTX* ctx){
@@ -31,7 +31,7 @@ static void sendToOthers(const char* msg,const ClientSocket* senderSocket,SSL_CT
         if(clients[i].FD&&clients[i].FD!=senderSocket->FD&&clients[i].nickname[0]!=0){
             const ssize_t bytes_write=SSL_write(clients[i].ssl,msg,strlen(msg));
             if(bytes_write<=0)
-                SSLErrorVerbose(ctx,clients[i].ssl,"SSL_write",bytes_write);
+                SSLErrorVerbose(clients[i].ssl,"SSL_write",bytes_write);
         }
     }
 }
@@ -46,8 +46,10 @@ static void clientDisconnect(const int epFD,ClientSocket* clientSocket,SSL_CTX* 
     sendToOthers(msg,clientSocket,ctx);
     free(msg);
 
-    SSL_shutdown(clientSocket->ssl);
-    SSL_free(clientSocket->ssl);
+	if(clientSocket->ssl){
+		SSL_shutdown(clientSocket->ssl);
+		SSL_free(clientSocket->ssl);
+	}
     epoll_ctl(epFD,EPOLL_CTL_DEL,clientSocket->FD,NULL);
     close(clientSocket->FD);
     memset(clientSocket,0,sizeof(*clientSocket));
@@ -63,18 +65,23 @@ static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
 		if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
 			return;
-		SSLErrorVerbose(ctx,ssl,"SSL_read",bytes_read);
+		if(error_code==SSL_ERROR_ZERO_RETURN){
+			clientDisconnect(epFD,clientSocket,ctx);
+			return;
+		}
+		SSLErrorVerbose(ssl,"SSL_read",bytes_read);
+		return;
 	}
 	msg[bytes_read]=0;
 	//sanitize
 
 	if(accept_nickname){
-		strncpy(clientSocket->nickname,msg,bytes_read);
-		clientSocket->nickname[bytes_read]=0;
+		strncpy(clientSocket->nickname,msg,NICKLEN-1);
+		clientSocket->nickname[NICKLEN-1]=0;
 	}else{
 		char broadcast[BROADCAST]={0};
 		broadcast[0]=TYPECLIENT;
-		snprintf(&broadcast[1],BROADCAST,"%s: %s",clientSocket->nickname,msg);
+		snprintf(&broadcast[1],BROADCAST-1,"%s: %s",clientSocket->nickname,msg);
 		broadcast[strlen(broadcast)]=0;
 		sendToOthers(broadcast,clientSocket,ctx);
 	}
@@ -93,8 +100,13 @@ static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,C
     if(SSL_set_fd(ssl,clientFD)==0)
         SSLError("SSL_set_fd",2,ctx,ssl);
     const int accept_error=SSL_accept(ssl);
-    if(accept_error<=0)
-        SSLErrorVerbose(ctx,ssl,"SSL_accept",accept_error);
+    if(accept_error<=0){
+        SSLErrorVerbose(ssl,"SSL_accept",accept_error);
+		SSL_shutdown(ssl);
+		SSL_free(ssl);
+		close(clientFD);
+		return;
+	}
 
     clientSocket->addr=clientAddress;
     clientSocket->nickname[0]=0;
@@ -144,7 +156,11 @@ int main(int argc,char** argv){
     if(ctx==NULL)
         STDError("SSL_CTX_new");
     SSL_CTX_set_default_passwd_cb(ctx,passwordCallback);
-    SSL_CTX_set_default_passwd_cb_userdata(ctx,(void*)&CERTPWD);
+    SSL_CTX_set_default_passwd_cb_userdata(ctx,(void*)CERTPWD);
+
+	SSL_CTX_set_min_proto_version(ctx,TLS1_2_VERSION);
+    SSL_CTX_set_options(ctx,SSL_OP_NO_RENEGOTIATION);
+    SSL_CTX_set_ecdh_auto(ctx,1);
 
     if(SSL_CTX_use_certificate_file(ctx,CERT,SSL_FILETYPE_PEM)!=1)
         SSLError("SSL_CTX_use_certificate_file",1,ctx);
@@ -167,7 +183,8 @@ int main(int argc,char** argv){
                     if(clients[j].FD==0){
                         memset(&clients[j],0,sizeof(clients[j]));
                         acceptNewClient(epFD,FD,&epollEvent,&clients[j],ctx);
-                        accepted=1;
+                        if(clients[j].FD!=0)
+							accepted=1;
                         break;
                     }
                 }
@@ -201,7 +218,6 @@ int main(int argc,char** argv){
     }
 
 	//shutdown
-	//never reached
     SSL_CTX_free(ctx);
     close(FD);
     return 0;

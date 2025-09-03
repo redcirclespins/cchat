@@ -24,7 +24,7 @@
 
 #define MSGLEN     257 //+\0
 #define NICKLEN    33 //+\0
-#define BROADCAST  1+MSGLEN-1+2+NICKLEN-1+1 //[TYPE]+%s+": "+%s\0
+#define BROADCAST  (1+MSGLEN-1+2+NICKLEN-1+1) //[TYPE]+%s+": "+%s\0
 
 #define RESET "\033[0m"
 #define RED   "\033[31m"
@@ -38,7 +38,7 @@
 
 void error(const char*);
 void STDError(const char*);
-void SSLErrorVerbose(SSL_CTX*,SSL*,const char*,const int);
+void SSLErrorVerbose(SSL*,const char*,const int);
 void SSLError(const char*,const int,...);
 uint16_t validatePort(const char*);
 int createSocket();

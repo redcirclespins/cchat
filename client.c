@@ -19,7 +19,7 @@ static int send_nickname=1;
 
 static struct termios origTermios;
 static char g_msg[MSGLEN]={0};
-static int g_msg_len=0;
+static size_t g_msg_len=0;
 
 // TERMINAL-NONCANONICAL
 static void ASCII(){
@@ -70,7 +70,7 @@ static in_addr_t validateIp(const char* ip_char){
 // SOCKET FUNCS
 
 // RECEIVE DATA
-static void receiveData(const int FD,SSL_CTX* ctx,SSL* ssl){
+static void receiveData(SSL_CTX* ctx,SSL* ssl){
     char msg[BROADCAST]={0};
     const ssize_t bytes_read=SSL_read(ssl,msg,BROADCAST-1);
 
@@ -78,7 +78,8 @@ static void receiveData(const int FD,SSL_CTX* ctx,SSL* ssl){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
         if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
         	return;
-        SSLErrorVerbose(ctx,ssl,"SSL_read",bytes_read);
+        SSLErrorVerbose(ssl,"SSL_read",bytes_read);
+		return;
 	}
     msg[bytes_read]=0;
 
@@ -96,37 +97,32 @@ static void receiveData(const int FD,SSL_CTX* ctx,SSL* ssl){
 // RECEIVE DATA
 
 // SEND DATA
-static void handleInput(const int FD,SSL_CTX* ctx,SSL* ssl){
+static int handleInput(SSL_CTX* ctx,SSL* ssl){
 	char c;
 	if(read(STDIN_FILENO,&c,1)<=0)
-		return;
+		return 0;
 
 	if(c=='\n'){
 		if(g_msg_len>0){
 			const ssize_t bytes_write=SSL_write(ssl,g_msg,g_msg_len);
 			if(bytes_write<=0)
-			  SSLErrorVerbose(ctx,ssl,"SSL_write",bytes_write);
+				SSLErrorVerbose(ssl,"SSL_write",bytes_write);
 			g_msg_len=0;
 		}
 
 		printf("\n--> ");
 		fflush(stdout);
 		send_nickname=0;
-	}else if(c==ESC){
-		printf(CLEARLINE CURSORSTART);
-		CMD("quit");
-		SSL_CTX_free(ctx);
-		SSL_free(ssl);
-		close(FD);
-		exit(0);
-	}else if(c==BACKSPACE){
+	}else if(c==ESC)
+		return -1;
+	else if(c==BACKSPACE){
 		if(g_msg_len>0){
 			g_msg_len--;
 			printf("\b \b");
 			fflush(stdout);
 		}
 	}else{
-		if(g_msg_len<MSGLEN-1){
+		if(g_msg_len<(send_nickname?(NICKLEN-1):(MSGLEN-1))){
 			g_msg[g_msg_len++]=c;
 			fwrite(&c,1,1,stdout);
 			fflush(stdout);
@@ -135,6 +131,7 @@ static void handleInput(const int FD,SSL_CTX* ctx,SSL* ssl){
 	//}else if(c==CMDONLINE){
 	//}else if(c==CMDFILE){
 	//}
+	return 0;
 }
 // SEND DATA
 
@@ -173,6 +170,7 @@ int main(int argc,char** argv){
     SSL_CTX* ctx=SSL_CTX_new(TLS_client_method());
     if(ctx==NULL)
         STDError("SSL_CTX_new");
+	SSL_CTX_set_min_proto_version(ctx,TLS1_2_VERSION);
     SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER,NULL);
     SSL_CTX_set_verify_depth(ctx,5);
     if(SSL_CTX_load_verify_locations(ctx,CACERT,CAPATH)==0)
@@ -185,8 +183,10 @@ int main(int argc,char** argv){
     if(SSL_set_fd(ssl,FD)==0)
         SSLError("SSL_set_fd",2,ctx,ssl);
     const int connect_error=SSL_connect(ssl);
-    if(connect_error<=0)
-        SSLErrorVerbose(ctx,ssl,"SSL_connect",connect_error);
+    if(connect_error<=0){
+        SSLErrorVerbose(ssl,"SSL_connect",connect_error);
+        SSLError("SSL_connect",1,ctx);
+	}
 
 	enableRawMode();
 	atexit(disableRawMode);
@@ -206,13 +206,20 @@ int main(int argc,char** argv){
             error("epoll_wait");
 
         for(int i=0;i<rFDs;i++){
-            if(events[i].data.fd==STDIN_FILENO)
-                handleInput(FD,ctx,ssl);
-			else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)&&!send_nickname)
-	    		receiveData(FD,ctx,ssl);
+            if(events[i].data.fd==STDIN_FILENO){
+                if(handleInput(ctx,ssl)==-1)
+					goto shutdown;
+			}else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)&&!send_nickname)
+	    		receiveData(ctx,ssl);
         }
     }
 
-	//never reached
+shutdown:
+	printf(CLEARLINE CURSORSTART);
+	CMD("quit");
+	SSL_shutdown(ssl);
+	SSL_free(ssl);
+	SSL_CTX_free(ctx);
+	close(FD);
     return 0;
 }

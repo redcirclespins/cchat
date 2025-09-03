@@ -15,80 +15,84 @@ void STDError(const char* msg){
 
 void ERRGetErrorDep(){ //deprecated!
     const unsigned long err_code=ERR_get_error();
-    if(err_code)
-		ERROR("%s",ERR_error_string(err_code,NULL));
+    if(err_code){
+		const char* err=ERR_error_string(err_code,NULL);
+		ERROR("%s",err);
+	}
 }
 
-void SSLErrorVerbose(SSL_CTX* ctx,SSL *ssl,const char* func,const int ret){
+void SSLErrorVerbose(SSL *ssl,const char* func,const int ret){
     const int error_code=SSL_get_error(ssl,ret);
-    SSL_CTX_free(ctx);
-    SSL_free(ssl);
-    char err[32]={0};
+    char errbuf[64]={0};
 
-    switch(error_code){
-        case SSL_ERROR_NONE:
-            break;
-        case SSL_ERROR_ZERO_RETURN:
-            strncpy(err,"SSL_ERROR_ZERO_RETURN",sizeof(err));
-	    	break;
-        case SSL_ERROR_WANT_READ:
-            strncpy(err,"SSL_ERROR_WANT_READ",sizeof(err));
-	    	break;
-        case SSL_ERROR_WANT_WRITE:
-            strncpy(err,"SSL_ERROR_WANT_WRITE",sizeof(err));
-	    	break;
-        case SSL_ERROR_WANT_CONNECT:
-            strncpy(err,"SSL_ERROR_WANT_CONNECT",sizeof(err));
-	    	break;
-        case SSL_ERROR_WANT_ACCEPT:
-            strncpy(err,"SSL_ERROR_WANT_ACCEPT",sizeof(err));
-	    	break;
-        case SSL_ERROR_WANT_X509_LOOKUP:
-            strncpy(err,"SSL_ERROR_WANT_X509_LOOKUP",sizeof(err));
-	    	break;
-        case SSL_ERROR_WANT_ASYNC:
-            strncpy(err,"SSL_ERROR_WANT_ASYNC",sizeof(err));
+	switch(error_code){
+		case SSL_ERROR_NONE:
+			strncpy(errbuf,"SSL_ERROR_NONE",sizeof(errbuf)-1);
 			break;
-        case SSL_ERROR_WANT_ASYNC_JOB:
-            strncpy(err,"SSL_ERROR_WANT_ASYNC",sizeof(err));
+        case SSL_ERROR_ZERO_RETURN:
+			strncpy(errbuf,"SSL_ERROR_ZERO_RETURN",sizeof(errbuf)-1);
+			break;
+		case SSL_ERROR_WANT_READ:
+			strncpy(errbuf,"SSL_ERROR_WANT_READ",sizeof(errbuf)-1);
+			break;
+		case SSL_ERROR_WANT_WRITE:
+			strncpy(errbuf,"SSL_ERROR_WANT_WRITE",sizeof(errbuf)-1);
+			break;
+		case SSL_ERROR_WANT_CONNECT:
+			strncpy(errbuf,"SSL_ERROR_WANT_CONNECT",sizeof(errbuf)-1);
+			break;
+        case SSL_ERROR_WANT_ACCEPT:
+			strncpy(errbuf,"SSL_ERROR_WANT_ACCEPT",sizeof(errbuf)-1);
+			break;
+		case SSL_ERROR_WANT_X509_LOOKUP:
+			strncpy(errbuf,"SSL_ERROR_WANT_X509_LOOKUP",sizeof(errbuf)-1);
+			break;
+		case SSL_ERROR_WANT_ASYNC:
+			strncpy(errbuf,"SSL_ERROR_WANT_ASYNC",sizeof(errbuf)-1);
+			break;
+		case SSL_ERROR_WANT_ASYNC_JOB:
+			strncpy(errbuf,"SSL_ERROR_WANT_ASYNC_JOB",sizeof(errbuf)-1);
 			break;
         case SSL_ERROR_WANT_CLIENT_HELLO_CB:
-            strncpy(err,"SSL_ERROR_WANT_CLIENT_HELLO_CB",sizeof(err));
+			strncpy(errbuf,"SSL_ERROR_WANT_CLIENT_HELLO_CB",sizeof(errbuf)-1);
 			break;
-        case SSL_ERROR_SYSCALL:
-            strncpy(err,"SSL_ERROR_SYSCALL",sizeof(err));
+		case SSL_ERROR_SYSCALL:
+			strncpy(errbuf,"SSL_ERROR_SYSCALL",sizeof(errbuf)-1);
 			break;
-        case SSL_ERROR_SSL:
-            strncpy(err,"SSL_ERROR_SSL",sizeof(err));
+		case SSL_ERROR_SSL:
+			strncpy(errbuf,"SSL_ERROR_SSL",sizeof(errbuf)-1);
 			break;
-        default:
-            strncpy(err,"UNKNOWN_SSL_ERROR",sizeof(err));
+		default:
+			strncpy(errbuf,"UNKNOWN_SSL_ERROR",sizeof(errbuf)-1);
 			break;
     }
+    errbuf[sizeof(errbuf)-1]=0;
 
-    const size_t final_err_size=snprintf(NULL,0,"%s:%s",func,err);
-    char* final_err=malloc(final_err_size+1);
-    snprintf(final_err,final_err_size+1,"%s:%s",func,err);
-    final_err[final_err_size]=0;
-    STDError(final_err);
+	char final_err[128]={0};
+    snprintf(final_err,sizeof(final_err),"%s:%s",func,errbuf);
+    ERROR("%s",final_err);
 }
 
-void SSLError(const char* msg,const int num,...){ //not very secure
-												  //by mistake some other values can be passed and freed
-												  //undefined behaviour
-    va_list free;
-    va_start(free,num);
+void SSLError(const char* msg,const int num,...){
+    va_list args;
+    va_start(args,num);
 
-    if(num>2||num<1)
-        STDError("SSLError");
-    else if(num==1)
-        SSL_CTX_free(va_arg(free,SSL_CTX*));
-    else if(num==2){
-        SSL_CTX_free(va_arg(free,SSL_CTX*));
-        SSL_free(va_arg(free,SSL*));
-    }
+    if(num==1){
+		SSL_CTX* ctx=va_arg(args,SSL_CTX*);
+		if(ctx)
+			SSL_CTX_free(ctx);
+	}else if(num==2){
+		SSL_CTX* ctx=va_arg(args,SSL_CTX*);
+        SSL* ssl=va_arg(args,SSL*);
+        if(ssl){
+			SSL_shutdown(ssl);
+			SSL_free(ssl);
+		}if(ctx)
+			SSL_CTX_free(ctx);
+    }else
+        STDError("SSLError: invalid usage");
 
-    va_end(free);
+    va_end(args);
     STDError(msg);
 }
 // ERROR HANDLING
