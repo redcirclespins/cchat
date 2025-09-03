@@ -16,6 +16,7 @@
 
 typedef struct epoll_event EpollEvent;
 static int send_nickname=1;
+static int server_quit=0;
 
 static struct termios origTermios;
 static char g_msg[MSGLEN]={0};
@@ -70,16 +71,18 @@ static in_addr_t validateIp(const char* ip_char){
 // SOCKET FUNCS
 
 // RECEIVE DATA
-static void receiveData(SSL_CTX* ctx,SSL* ssl){
+static int receiveData(SSL_CTX* ctx,SSL* ssl){
     char msg[BROADCAST]={0};
     const ssize_t bytes_read=SSL_read(ssl,msg,BROADCAST-1);
 
     if(bytes_read<=0){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
         if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
-        	return;
+        	return 0;
+		if(error_code==SSL_ERROR_SSL)
+			return -1;
         SSLErrorVerbose(ssl,"SSL_read",bytes_read);
-		return;
+		return 0;
 	}
     msg[bytes_read]=0;
 
@@ -93,6 +96,7 @@ static void receiveData(SSL_CTX* ctx,SSL* ssl){
 	printf("--> ");
     fwrite(g_msg,1,g_msg_len,stdout);
     fflush(stdout);
+	return 0;
 }
 // RECEIVE DATA
 
@@ -209,14 +213,21 @@ int main(int argc,char** argv){
             if(events[i].data.fd==STDIN_FILENO){
                 if(handleInput(ctx,ssl)==-1)
 					goto shutdown;
-			}else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)&&!send_nickname)
-	    		receiveData(ctx,ssl);
+			}else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)&&!send_nickname){
+                if(receiveData(ctx,ssl)==-1){
+					server_quit=1;
+					goto shutdown;
+				}
+			}
         }
     }
 
 shutdown:
 	printf(CLEARLINE CURSORSTART);
-	CMD("quit");
+	if(server_quit)
+		ERROR("server quit");
+	else
+		CMD("quit");
 	SSL_shutdown(ssl);
 	SSL_free(ssl);
 	SSL_CTX_free(ctx);
