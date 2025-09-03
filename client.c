@@ -7,8 +7,8 @@
 
 #define CMDFILE      12
 #define CMDONLINE    15
-#define ESC       27
-#define BACKSPACE 127
+#define ESC          27
+#define BACKSPACE 	 127
 
 #define MAXEVENTS 2
 #define CAPATH NULL
@@ -80,11 +80,13 @@ static void receiveData(const int FD,SSL_CTX* ctx,SSL* ssl){
         	return;
         SSLErrorVerbose(ctx,ssl,"SSL_read",bytes_read);
 	}
-
     msg[bytes_read]=0;
 
     printf(CLEARLINE CURSORSTART);
-    printf("%s\n",msg); 
+	if(msg[0]==TYPESERVER)
+		SERVER("%s",&msg[1]); 
+	else if(msg[0]==TYPECLIENT)
+		printf("%s\n",&msg[1]); 
 	
 	printf(CLEARLINE);
 	printf("--> ");
@@ -124,10 +126,11 @@ static void handleInput(const int FD,SSL_CTX* ctx,SSL* ssl){
 			fflush(stdout);
 		}
 	}else{
-		if(g_msg_len<MSGLEN-1)
+		if(g_msg_len<MSGLEN-1){
 			g_msg[g_msg_len++]=c;
-		fwrite(&c,1,1,stdout);
-        fflush(stdout);
+			fwrite(&c,1,1,stdout);
+			fflush(stdout);
+		}
 	}
 	//}else if(c==CMDONLINE){
 	//}else if(c==CMDFILE){
@@ -137,7 +140,7 @@ static void handleInput(const int FD,SSL_CTX* ctx,SSL* ssl){
 
 int main(int argc,char** argv){
     if(argc!=3){
-        ERRORSTD("usage: %s <server-ip-address> <port>\n",argv[0]);
+        ERROR("usage: %s <server-ip-address> <port>",argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -210,9 +213,6 @@ int main(int argc,char** argv){
         }
     }
 
-	//shutdown
-    SSL_CTX_free(ctx);
-    SSL_free(ssl);
-    close(FD);
+	//never reached
     return 0;
 }

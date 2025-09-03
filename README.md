@@ -29,6 +29,8 @@ you can also enter 'localhost' for testing
 
 ## COMPILE
 
+before compilation put password form cert/pass to CERTPWD macro at the top of *server.c* file
+
 ```
 gcc -o func.o -c func.c
 gcc -o client client.c func.o -lssl -lcrypto

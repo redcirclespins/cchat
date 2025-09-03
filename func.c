@@ -2,81 +2,80 @@
 
 // ERROR HANDLING
 void error(const char* msg){
-    ERROR;
-    fflush(stdout);
-    perror(msg);
+    ERRORSTD;
+	fflush(stdout);
+	perror(msg);
     exit(EXIT_FAILURE);
 }
 
 void STDError(const char* msg){
-    ERROR;
-    fflush(stdout);
-    fputs(msg,stderr);
-    fputc('\n',stderr);
+    ERROR("%s",msg);
     exit(EXIT_FAILURE);
 }
 
 void ERRGetErrorDep(){ //deprecated!
-    unsigned long err_code=ERR_get_error();
+    const unsigned long err_code=ERR_get_error();
     if(err_code)
-		fprintf(stderr,"SSL error: %s\n",ERR_error_string(err_code,NULL));
+		ERROR("%s",ERR_error_string(err_code,NULL));
 }
 
 void SSLErrorVerbose(SSL_CTX* ctx,SSL *ssl,const char* func,const int ret){
-    int error_code=SSL_get_error(ssl,ret);
+    const int error_code=SSL_get_error(ssl,ret);
     SSL_CTX_free(ctx);
     SSL_free(ssl);
-    char err[64];
+    char err[32]={0};
 
     switch(error_code){
         case SSL_ERROR_NONE:
             break;
         case SSL_ERROR_ZERO_RETURN:
             strncpy(err,"SSL_ERROR_ZERO_RETURN",sizeof(err));
-	    break;
+	    	break;
         case SSL_ERROR_WANT_READ:
             strncpy(err,"SSL_ERROR_WANT_READ",sizeof(err));
-	    break;
+	    	break;
         case SSL_ERROR_WANT_WRITE:
             strncpy(err,"SSL_ERROR_WANT_WRITE",sizeof(err));
-	    break;
+	    	break;
         case SSL_ERROR_WANT_CONNECT:
             strncpy(err,"SSL_ERROR_WANT_CONNECT",sizeof(err));
-	    break;
+	    	break;
         case SSL_ERROR_WANT_ACCEPT:
             strncpy(err,"SSL_ERROR_WANT_ACCEPT",sizeof(err));
-	    break;
+	    	break;
         case SSL_ERROR_WANT_X509_LOOKUP:
             strncpy(err,"SSL_ERROR_WANT_X509_LOOKUP",sizeof(err));
-	    break;
+	    	break;
         case SSL_ERROR_WANT_ASYNC:
             strncpy(err,"SSL_ERROR_WANT_ASYNC",sizeof(err));
-	    break;
+			break;
         case SSL_ERROR_WANT_ASYNC_JOB:
             strncpy(err,"SSL_ERROR_WANT_ASYNC",sizeof(err));
-	    break;
+			break;
         case SSL_ERROR_WANT_CLIENT_HELLO_CB:
             strncpy(err,"SSL_ERROR_WANT_CLIENT_HELLO_CB",sizeof(err));
-	    break;
+			break;
         case SSL_ERROR_SYSCALL:
             strncpy(err,"SSL_ERROR_SYSCALL",sizeof(err));
-	    break;
+			break;
         case SSL_ERROR_SSL:
             strncpy(err,"SSL_ERROR_SSL",sizeof(err));
-	    break;
+			break;
         default:
             strncpy(err,"UNKNOWN_SSL_ERROR",sizeof(err));
-	    break;
+			break;
     }
 
-    size_t final_err_size=snprintf(NULL,0,"%s:%s",func,err);
+    const size_t final_err_size=snprintf(NULL,0,"%s:%s",func,err);
     char* final_err=malloc(final_err_size+1);
-    snprintf(final_err,final_err_size,"%s:%s",func,err);
-    final_err[final_err_size+1]=0;
+    snprintf(final_err,final_err_size+1,"%s:%s",func,err);
+    final_err[final_err_size]=0;
     STDError(final_err);
 }
 
-void SSLError(const char* msg,const int num,...){
+void SSLError(const char* msg,const int num,...){ //not very secure
+												  //by mistake some other values can be passed and freed
+												  //undefined behaviour
     va_list free;
     va_start(free,num);
 
@@ -135,26 +134,3 @@ void setBlocking(const int FD){
         error("fcntl:BLOCKING");
 }
 // SOCKET FUNCS
-
-// MESSAGE HANDLING
-int sanitizeAndVerifyReadInput(char *msg,size_t *msg_len){
-    if(msg==NULL||*msg==0)
-        return -1;
-
-    size_t i=0;
-    while(i<*msg_len){
-        if(msg[i]=='\n'||msg[i]=='\r'||msg[i]=='\b'|| 
-            msg[i]=='\t'||msg[i]=='\f'||msg[i]=='\v'||
-            msg[i]=='\\'||msg[i]=='\''||msg[i]=='\"'){
-            for(size_t j=i;j<*msg_len-1;j++)
-                msg[j]=msg[j+1];
-            msg[--(*msg_len)]=0;
-        }else
-            i++;
-    }
-
-    if(*msg==0)
-        return -1;
-    return 0;
-}
-// MESSAGE HANDLING

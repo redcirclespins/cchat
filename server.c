@@ -1,10 +1,11 @@
 #include "func.h"
 
 #define MAXCLIENTS 2
-#define MAXEVENTS 4
-#define CERTPWD "" //insert password from cert/pass here
-#define CERT "cert/cert.pem"
-#define KEY "cert/cert.key"
+#define MAXEVENTS  4
+
+#define CERTPWD "" //insert password from cert/pass
+#define CERT    "cert/cert.pem"
+#define KEY 	"cert/cert.key"
 
 typedef struct epoll_event EpollEvent;
 static EpollEvent events[MAXEVENTS]={0};
@@ -17,7 +18,7 @@ typedef struct ClientSocket{
 }ClientSocket;
 static ClientSocket clients[MAXCLIENTS]={0};
 
-int passwordCallback(char* buf,int size,int rwflag,void* userdata){
+static int passwordCallback(char* buf,int size,int rwflag,void* userdata){
     char* password=(char*)userdata;
     if(!password||password[0]==0||size<strlen(password)+1)
         return 0;
@@ -37,11 +38,11 @@ static void sendToOthers(const char* msg,const ClientSocket* senderSocket,SSL_CT
 
 static void clientDisconnect(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
     const size_t msg_len=snprintf(NULL,0,"'%s' disconnected",clientSocket->nickname);
-    char* msg=malloc(msg_len+1);
+    char* msg=malloc(msg_len+2); //+TYPE+\0
     if(msg==NULL)
         error("malloc");
-    snprintf(msg,msg_len+1,"'%s' disconnected",clientSocket->nickname); //+\0
-    msg[msg_len]=0;
+	msg[0]=TYPESERVER;
+    snprintf(&msg[1],msg_len+1,"'%s' disconnected",clientSocket->nickname);
     sendToOthers(msg,clientSocket,ctx);
     free(msg);
 
@@ -57,7 +58,7 @@ static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
     SSL* ssl=clientSocket->ssl;
 	const int accept_nickname=clientSocket->nickname[0]==0;
 
-	ssize_t bytes_read=SSL_read(ssl,msg,accept_nickname?NICKLEN-1:sizeof(msg)-1);
+	ssize_t bytes_read=SSL_read(ssl,msg,accept_nickname?NICKLEN-1:MSGLEN-1);
 	if(bytes_read<=0){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
 		if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
@@ -65,21 +66,17 @@ static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
 		SSLErrorVerbose(ctx,ssl,"SSL_read",bytes_read);
 	}
 	msg[bytes_read]=0;
-
-	size_t msg_len=bytes_read;
-	if(sanitizeAndVerifyReadInput(msg,&msg_len)==-1)
-		return;
-	msg[msg_len]=0;
+	//sanitize
 
 	if(accept_nickname){
-		strncpy(clientSocket->nickname,msg,strlen(msg));
-		clientSocket->nickname[strlen(msg)]=0;
+		strncpy(clientSocket->nickname,msg,bytes_read);
+		clientSocket->nickname[bytes_read]=0;
 	}else{
-		char broadcast[MSGLEN-1+2+NICKLEN-1+1]; //-\0+": "-\0+\0
-		snprintf(broadcast,sizeof(broadcast),"%s: %s",clientSocket->nickname,msg);
+		char broadcast[BROADCAST]={0};
+		broadcast[0]=TYPECLIENT;
+		snprintf(&broadcast[1],BROADCAST,"%s: %s",clientSocket->nickname,msg);
 		broadcast[strlen(broadcast)]=0;
 		sendToOthers(broadcast,clientSocket,ctx);
-		//fix the last char missing
 	}
 }
 
@@ -113,9 +110,7 @@ static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,C
 
 int main(int argc,char** argv){
     if(argc!=2){
-        ERROR;
-        fflush(stdout);
-        printf("usage: %s <port>\n",argv[0]);
+        ERROR("usage: %s <port>",argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -160,7 +155,7 @@ int main(int argc,char** argv){
 
 	//main flow
     while(1){
-        int nFDs=epoll_wait(epFD,events,MAXEVENTS,-1);
+        const int nFDs=epoll_wait(epFD,events,MAXEVENTS,-1);
         if(nFDs==-1)
             error("epoll_wait");
 
@@ -176,10 +171,10 @@ int main(int argc,char** argv){
                         break;
                     }
                 }
-                if(accepted==0){
-                    struct sockaddr_in dump_addr;
-                    socklen_t dump_sz=sizeof(dump_addr);
-                    int tmpFD=accept(FD,(struct sockaddr*)&dump_addr,&dump_sz);
+                if(accepted==0){ //remove or add SSL+add MAXCLIENTS and instantly return and delete client
+                    struct sockaddr_in dumpAddr;
+                    socklen_t dump_sz=sizeof(dumpAddr);
+                    const int tmpFD=accept(FD,(struct sockaddr*)&dumpAddr,&dump_sz);
                     if(tmpFD!=-1){
                         const char* msg="server full!";
                         write(tmpFD,msg,strlen(msg));
@@ -206,6 +201,7 @@ int main(int argc,char** argv){
     }
 
 	//shutdown
+	//never reached
     SSL_CTX_free(ctx);
     close(FD);
     return 0;
