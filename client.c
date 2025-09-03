@@ -3,10 +3,12 @@
 #define CURSORUP    "\033[A"
 #define CURSORDOWN  "\033[B"
 #define CURSORSTART "\r"
-#define CLEARLINE   "\033[K"
+#define CLEARLINE   "\033[2K"
 
-#define CMDONLINE 15
-#define CMDFILE   12
+#define CMDFILE      12
+#define CMDONLINE    15
+#define ESC       27
+#define BACKSPACE 127
 
 #define MAXEVENTS 2
 #define CAPATH NULL
@@ -81,11 +83,11 @@ static void receiveData(const int FD,SSL_CTX* ctx,SSL* ssl){
 
     msg[bytes_read]=0;
 
-	printf("\n");
-    printf(CLEARLINE);
+    printf(CLEARLINE CURSORSTART);
     printf("%s\n",msg); 
 	
-	printf(CURSORSTART CLEARLINE);
+	printf(CLEARLINE);
+	printf("--> ");
     fwrite(g_msg,1,g_msg_len,stdout);
     fflush(stdout);
 }
@@ -108,11 +110,19 @@ static void handleInput(const int FD,SSL_CTX* ctx,SSL* ssl){
 		printf("\n--> ");
 		fflush(stdout);
 		send_nickname=0;
-	}else if(c==27){
+	}else if(c==ESC){
+		printf(CLEARLINE CURSORSTART);
+		CMD("quit");
 		SSL_CTX_free(ctx);
 		SSL_free(ssl);
 		close(FD);
 		exit(0);
+	}else if(c==BACKSPACE){
+		if(g_msg_len>0){
+			g_msg_len--;
+			printf("\b \b");
+			fflush(stdout);
+		}
 	}else{
 		if(g_msg_len<MSGLEN-1)
 			g_msg[g_msg_len++]=c;

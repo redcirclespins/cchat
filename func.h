@@ -30,6 +30,7 @@
 
 #define INFO(msg,...)     printf("[" GREEN "INFO" RESET "] " msg "\n",##__VA_ARGS__)
 #define ERRORSTD(msg,...) printf("[" RED "ERROR" RESET "] " msg "\n",##__VA_ARGS__)
+#define CMD(cmd,...)      printf("[" GREEN "COMMAND" RESET "] " cmd "\n",##__VA_ARGS__)
 #define ERROR 			  printf("[" RED "ERROR" RESET "] ")
 
 void error(const char*);
