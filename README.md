@@ -29,12 +29,25 @@ you can also enter 'localhost' for testing
 
 ## COMPILE
 
-before compilation put password form cert/pass to CERTPWD macro at the top of *server.c* file
+before compilation put password form cert/pass to *CERTPWD* macro at the top of *server.c* file
 
 ```
-gcc -o func.o -c func.c
-gcc -o client client.c func.o -lssl -lcrypto
-gcc -o server server.c func.o -lssl -lcrypto
+make
+```
+
+## RUN SERVER & CLIENT
+
+```
+usage: ./server <port>
+```
+
+before running client you should:
+1. ```mkdir cert```
+2. copy the *cert.pem* inside the cert directory
+3. ensure the user that will run the client has read permissions to the file *cert.pem*
+
+```
+usage: ./client <server-ip-address> <port>
 ```
 
 ## ENABLE PORT FORWARDING ON SERVER SIDE
@@ -59,21 +72,6 @@ sudo ufw allow <port>/tcp
 ```
 sudo firewall-cmd --permanent --add-port=<port>/tcp
 sudo firewall-cmd --reload
-```
-
-## RUN SERVER & CLIENT
-
-```
-usage: ./server <port>
-```
-
-before running client you should:
-1. ```mkdir cert```
-2. copy the *cert.pem* inside the cert directory
-3. ensure the user that will run the client has read permissions to the file *cert.pem*
-
-```
-usage: ./client <server-ip-address> <port>
 ```
 
 ## COMING SOON

@@ -38,10 +38,11 @@
 
 void error(const char*);
 void STDError(const char*);
+void ERRGetErrorDep(void); //deprecated!
 void SSLErrorVerbose(SSL*,const char*,const int);
 void SSLError(const char*,const int,...);
 uint16_t validatePort(const char*);
-int createSocket();
+int createSocket(void);
 void createAddress(struct sockaddr_in*,const in_addr_t,const uint16_t);
 void setNonBlocking(const int);
 void setBlocking(const int);

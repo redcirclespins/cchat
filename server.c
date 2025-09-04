@@ -27,33 +27,43 @@ static ClientSocket clients[MAXCLIENTS]={0};
 
 // SSL FUNCS
 static int passwordCallback(char* buf,int size,int rwflag,void* userdata){
-    char* password=(char*)userdata;
-    if(!password||password[0]==0||size<(int)strlen(password)+1)
+	(void)rwflag;
+
+    const char* password=(const char*)userdata;
+    if(!password||password[0]==0){
         return 0;
-    strncpy(buf,password,strlen(password)+1);
-    return (int)strlen(password);
+	}
+
+	const size_t pass_len=strlen(password);
+	if((int)(pass_len+1)>size){
+		return 0;
+	}
+
+	memcpy(buf,password,pass_len);
+	buf[pass_len]=0;
+    return (int)pass_len;
 }
 // SSL FUNCS
 
 // SEND DATA
-static void sendToOthers(const char* msg,const ClientSocket* senderSocket,SSL_CTX* ctx){
+static void sendToOthers(const char* msg,const ClientSocket* senderSocket){
     for(int i=0;i<MAXCLIENTS;i++){
         if(clients[i].FD&&clients[i].FD!=senderSocket->FD&&clients[i].nickname[0]!=0){
-            const ssize_t bytes_write=SSL_write(clients[i].ssl,msg,strlen(msg));
+            const ssize_t bytes_write=SSL_write(clients[i].ssl,msg,(int)strlen(msg));
             if(bytes_write<=0)
-                SSLErrorVerbose(clients[i].ssl,"SSL_write",bytes_write);
+                SSLErrorVerbose(clients[i].ssl,"SSL_write",(int)bytes_write);
         }
     }
 }
 // SEND DATA
 
 // HANDLE CLIENTS
-static void clientDisconnect(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
+static void clientDisconnect(const int epFD,ClientSocket* clientSocket){
 	if(clientSocket->nickname[0]!=0){
 		char client_quit[MSGLEN]={0};
 		client_quit[0]=TYPESERVER;
 		snprintf(&client_quit[1],MSGLEN-1,"'%s' disconnected",clientSocket->nickname);
-		sendToOthers(client_quit,clientSocket,ctx);
+		sendToOthers(client_quit,clientSocket);
 	}
 
 	if(clientSocket->ssl){
@@ -100,7 +110,7 @@ static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,C
 // HANDLE CLIENTS
 
 // RECEIVE DATA
-static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
+static void receiveData(const int epFD,ClientSocket* clientSocket){
     char msg[MSGLEN]={0};
     SSL* ssl=clientSocket->ssl;
 	const int accept_nickname=clientSocket->nickname[0]==0;
@@ -111,10 +121,10 @@ static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
 		if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
 			return;
 		if(error_code==SSL_ERROR_ZERO_RETURN){
-			clientDisconnect(epFD,clientSocket,ctx);
+			clientDisconnect(epFD,clientSocket);
 			return;
 		}
-		SSLErrorVerbose(ssl,"SSL_read",bytes_read);
+		SSLErrorVerbose(ssl,"SSL_read",(int)bytes_read);
 		return;
 	}
 	msg[bytes_read]=0;
@@ -128,13 +138,13 @@ static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
 		new_client[0]=TYPESERVER;
 		snprintf(&new_client[1],MSGLEN-1,"'%s' connected",clientSocket->nickname);
 		new_client[strlen(new_client)]=0;
-		sendToOthers(new_client,clientSocket,ctx);
+		sendToOthers(new_client,clientSocket);
 	}else{
 		char broadcast[BROADCAST]={0};
 		broadcast[0]=TYPECLIENT;
 		snprintf(&broadcast[1],BROADCAST-1,"%s: %s",clientSocket->nickname,msg);
 		broadcast[strlen(broadcast)]=0;
-		sendToOthers(broadcast,clientSocket,ctx);
+		sendToOthers(broadcast,clientSocket);
 	}
 }
 // RECEIVE DATA
@@ -232,9 +242,9 @@ int main(int argc,char** argv){
                     continue;
                 if(events[i].data.fd==clientSocket->FD){
                     if(events[i].events&(EPOLLRDHUP|EPOLLHUP))
-                        clientDisconnect(epFD,clientSocket,ctx);
+                        clientDisconnect(epFD,clientSocket);
                     else if(events[i].events&EPOLLIN)
-                        receiveData(epFD,clientSocket,ctx);
+                        receiveData(epFD,clientSocket);
                     break;
                 }
             }
@@ -244,7 +254,7 @@ int main(int argc,char** argv){
 	//shutdown
 	for(int i=0;i<MAXCLIENTS;i++){
 		if(clients[i].FD>0)
-			clientDisconnect(epFD,&clients[i],ctx);
+			clientDisconnect(epFD,&clients[i]);
 	}
     if(FD){
 		epoll_ctl(epFD,EPOLL_CTL_DEL,FD,NULL);

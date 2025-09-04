@@ -13,7 +13,7 @@ void STDError(const char* msg){
     exit(EXIT_FAILURE);
 }
 
-void ERRGetErrorDep(){ //deprecated!
+void ERRGetErrorDep(void){ //deprecated!
     const unsigned long err_code=ERR_get_error();
     if(err_code){
 		const char* err=ERR_error_string(err_code,NULL);
@@ -109,7 +109,7 @@ uint16_t validatePort(const char* port_char){
     return (uint16_t)port;
 }
 
-int createSocket(){
+int createSocket(void){
     int FD=socket(AF_INET,SOCK_STREAM,0);
     if(FD==-1)
         error("socket failed");

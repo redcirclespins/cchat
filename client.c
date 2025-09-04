@@ -23,7 +23,7 @@ static char g_msg[MSGLEN]={0};
 static size_t g_msg_len=0;
 
 // TERMINAL-NONCANONICAL
-static void ASCII(){
+static void ASCII(void){
     puts("           _           _       ");
     puts("          | |         | |		 ");
     puts("   ___ ___| |__   __ _| |		 ");
@@ -33,7 +33,7 @@ static void ASCII(){
     putchar('\n');
 }
 
-static void commands(){
+static void commands(void){
     puts("available KEY commands");
     puts("+---------+-------------------+");
     puts("| ESC    | quit               |");
@@ -43,19 +43,19 @@ static void commands(){
     putchar('\n');
 }
 
-static void enableRawMode(){
+static void enableRawMode(void){
 	struct termios raw;
 	if(tcgetattr(STDIN_FILENO,&origTermios)==-1)
         error("tcgetattr");
 	raw=origTermios;
-	raw.c_lflag &= ~(ICANON|ECHO|ISIG);
+	raw.c_lflag&=(tcflag_t)~(ICANON|ECHO|ISIG);
 	raw.c_cc[VMIN]=1;
 	raw.c_cc[VTIME]=0;
 	if(tcsetattr(STDIN_FILENO,TCSAFLUSH,&raw)==-1)
         error("tcsetattr");
 }
 
-static void disableRawMode(){
+static void disableRawMode(void){
 	if(tcsetattr(STDIN_FILENO,TCSAFLUSH,&origTermios)==-1)
         error("tcsetattr");
 }
@@ -71,17 +71,18 @@ static in_addr_t validateIp(const char* ip_char){
 // SOCKET FUNCS
 
 // RECEIVE DATA
-static int receiveData(SSL_CTX* ctx,SSL* ssl){
+static int receiveData(SSL* ssl){
     char msg[BROADCAST]={0};
     const ssize_t bytes_read=SSL_read(ssl,msg,BROADCAST-1);
 
     if(bytes_read<=0){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
-        if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
+        if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE){
         	return 0;
-		if(error_code==SSL_ERROR_SSL||error_code==SSL_ERROR_ZERO_RETURN)
+		}else if(error_code==SSL_ERROR_SSL||error_code==SSL_ERROR_ZERO_RETURN){
 			return -1;
-        SSLErrorVerbose(ssl,"SSL_read",bytes_read);
+		}
+        SSLErrorVerbose(ssl,"SSL_read",(int)bytes_read);
 		return 0;
 	}
 	if(send_nickname&&msg[0]!=TYPESERVER)
@@ -103,16 +104,16 @@ static int receiveData(SSL_CTX* ctx,SSL* ssl){
 // RECEIVE DATA
 
 // SEND DATA
-static int handleInput(SSL_CTX* ctx,SSL* ssl){
+static int handleInput(SSL* ssl){
 	char c;
 	if(read(STDIN_FILENO,&c,1)<=0)
 		return 0;
 
 	if(c=='\n'){
 		if(g_msg_len>0){
-			const ssize_t bytes_write=SSL_write(ssl,g_msg,g_msg_len);
+			const ssize_t bytes_write=SSL_write(ssl,g_msg,(int)g_msg_len);
 			if(bytes_write<=0)
-				SSLErrorVerbose(ssl,"SSL_write",bytes_write);
+				SSLErrorVerbose(ssl,"SSL_write",(int)bytes_write);
 			g_msg_len=0;
 		}
 
@@ -174,8 +175,9 @@ int main(int argc,char** argv){
 
 	//ssl
     SSL_CTX* ctx=SSL_CTX_new(TLS_client_method());
-    if(ctx==NULL)
+    if(ctx==NULL){
         STDError("SSL_CTX_new");
+	}
 	SSL_CTX_set_min_proto_version(ctx,TLS1_2_VERSION);
     SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER,NULL);
     SSL_CTX_set_verify_depth(ctx,5);
@@ -213,10 +215,10 @@ int main(int argc,char** argv){
 
         for(int i=0;i<rFDs;i++){
             if(events[i].data.fd==STDIN_FILENO){
-                if(handleInput(ctx,ssl)==-1)
+                if(handleInput(ssl)==-1)
 					goto shutdown;
 			}else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)){
-                if(receiveData(ctx,ssl)==-1){
+                if(receiveData(ssl)==-1){
 					server_quit=1;
 					goto shutdown;
 				}
