@@ -2,6 +2,7 @@
 
 #define MAXCLIENTS 2
 #define MAXEVENTS  4
+#define TIMEOUT    1000
 
 #define CERTPWD "" //insert password from cert/pass
 #define CERT    "cert/cert.pem"
@@ -9,6 +10,12 @@
 
 typedef struct epoll_event EpollEvent;
 static EpollEvent events[MAXEVENTS]={0};
+
+static volatile sig_atomic_t stop_server=0;
+static void handleSigInt(int sig){
+	(void)sig;
+	stop_server=1;
+}
 
 typedef struct ClientSocket{
     struct sockaddr_in addr;
@@ -18,6 +25,7 @@ typedef struct ClientSocket{
 }ClientSocket;
 static ClientSocket clients[MAXCLIENTS]={0};
 
+// SSL FUNCS
 static int passwordCallback(char* buf,int size,int rwflag,void* userdata){
     char* password=(char*)userdata;
     if(!password||password[0]==0||size<(int)strlen(password)+1)
@@ -25,7 +33,9 @@ static int passwordCallback(char* buf,int size,int rwflag,void* userdata){
     strncpy(buf,password,strlen(password)+1);
     return (int)strlen(password);
 }
+// SSL FUNCS
 
+// SEND DATA
 static void sendToOthers(const char* msg,const ClientSocket* senderSocket,SSL_CTX* ctx){
     for(int i=0;i<MAXCLIENTS;i++){
         if(clients[i].FD&&clients[i].FD!=senderSocket->FD&&clients[i].nickname[0]!=0){
@@ -35,16 +45,16 @@ static void sendToOthers(const char* msg,const ClientSocket* senderSocket,SSL_CT
         }
     }
 }
+// SEND DATA
 
+// HANDLE CLIENTS
 static void clientDisconnect(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
-    const size_t msg_len=snprintf(NULL,0,"'%s' disconnected",clientSocket->nickname);
-    char* msg=malloc(msg_len+2); //+TYPE+\0
-    if(msg==NULL)
-        error("malloc");
-	msg[0]=TYPESERVER;
-    snprintf(&msg[1],msg_len+1,"'%s' disconnected",clientSocket->nickname);
-    sendToOthers(msg,clientSocket,ctx);
-    free(msg);
+	if(clientSocket->nickname[0]!=0){
+		char client_quit[MSGLEN]={0};
+		client_quit[0]=TYPESERVER;
+		snprintf(&client_quit[1],MSGLEN-1,"'%s' disconnected",clientSocket->nickname);
+		sendToOthers(client_quit,clientSocket,ctx);
+	}
 
 	if(clientSocket->ssl){
 		SSL_shutdown(clientSocket->ssl);
@@ -53,38 +63,6 @@ static void clientDisconnect(const int epFD,ClientSocket* clientSocket,SSL_CTX* 
     epoll_ctl(epFD,EPOLL_CTL_DEL,clientSocket->FD,NULL);
     close(clientSocket->FD);
     memset(clientSocket,0,sizeof(*clientSocket));
-}
-
-static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
-    char msg[MSGLEN]={0};
-    SSL* ssl=clientSocket->ssl;
-	const int accept_nickname=clientSocket->nickname[0]==0;
-
-	ssize_t bytes_read=SSL_read(ssl,msg,accept_nickname?NICKLEN-1:MSGLEN-1);
-	if(bytes_read<=0){
-		int error_code=SSL_get_error(ssl,(int)bytes_read);
-		if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
-			return;
-		if(error_code==SSL_ERROR_ZERO_RETURN){
-			clientDisconnect(epFD,clientSocket,ctx);
-			return;
-		}
-		SSLErrorVerbose(ssl,"SSL_read",bytes_read);
-		return;
-	}
-	msg[bytes_read]=0;
-	//sanitize
-
-	if(accept_nickname){
-		strncpy(clientSocket->nickname,msg,NICKLEN-1);
-		clientSocket->nickname[NICKLEN-1]=0;
-	}else{
-		char broadcast[BROADCAST]={0};
-		broadcast[0]=TYPECLIENT;
-		snprintf(&broadcast[1],BROADCAST-1,"%s: %s",clientSocket->nickname,msg);
-		broadcast[strlen(broadcast)]=0;
-		sendToOthers(broadcast,clientSocket,ctx);
-	}
 }
 
 static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,ClientSocket* clientSocket,SSL_CTX* ctx){
@@ -119,12 +97,55 @@ static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,C
     if(epoll_ctl(epFD,EPOLL_CTL_ADD,clientFD,epollEvent)==-1)
         perror("epoll_ctl:clientFD");
 }
+// HANDLE CLIENTS
+
+// RECEIVE DATA
+static void receiveData(const int epFD,ClientSocket* clientSocket,SSL_CTX* ctx){
+    char msg[MSGLEN]={0};
+    SSL* ssl=clientSocket->ssl;
+	const int accept_nickname=clientSocket->nickname[0]==0;
+
+	ssize_t bytes_read=SSL_read(ssl,msg,accept_nickname?NICKLEN-1:MSGLEN-1);
+	if(bytes_read<=0){
+		int error_code=SSL_get_error(ssl,(int)bytes_read);
+		if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
+			return;
+		if(error_code==SSL_ERROR_ZERO_RETURN){
+			clientDisconnect(epFD,clientSocket,ctx);
+			return;
+		}
+		SSLErrorVerbose(ssl,"SSL_read",bytes_read);
+		return;
+	}
+	msg[bytes_read]=0;
+	//sanitize
+
+	if(accept_nickname){
+		strncpy(clientSocket->nickname,msg,NICKLEN-1);
+		clientSocket->nickname[NICKLEN-1]=0;
+
+		char new_client[MSGLEN]={0};
+		new_client[0]=TYPESERVER;
+		snprintf(&new_client[1],MSGLEN-1,"'%s' connected",clientSocket->nickname);
+		new_client[strlen(new_client)]=0;
+		sendToOthers(new_client,clientSocket,ctx);
+	}else{
+		char broadcast[BROADCAST]={0};
+		broadcast[0]=TYPECLIENT;
+		snprintf(&broadcast[1],BROADCAST-1,"%s: %s",clientSocket->nickname,msg);
+		broadcast[strlen(broadcast)]=0;
+		sendToOthers(broadcast,clientSocket,ctx);
+	}
+}
+// RECEIVE DATA
 
 int main(int argc,char** argv){
     if(argc!=2){
         ERROR("usage: %s <port>",argv[0]);
         return EXIT_FAILURE;
     }
+	signal(SIGINT,handleSigInt);
+    signal(SIGTERM,handleSigInt);
 
 	//socket
     const uint16_t port=validatePort(argv[1]);
@@ -170,10 +191,13 @@ int main(int argc,char** argv){
         SSLError("SSL_CTX_check_private_key",1,ctx);
 
 	//main flow
-    while(1){
-        const int nFDs=epoll_wait(epFD,events,MAXEVENTS,-1);
-        if(nFDs==-1)
+    while(!stop_server){
+        const int nFDs=epoll_wait(epFD,events,MAXEVENTS,TIMEOUT);
+        if(nFDs==-1){
+			if(errno==EINTR)
+				continue;
             error("epoll_wait");
+		}
 
         for(int i=0;i<nFDs;i++){
 			//accept
@@ -218,7 +242,18 @@ int main(int argc,char** argv){
     }
 
 	//shutdown
-    SSL_CTX_free(ctx);
-    close(FD);
+	for(int i=0;i<MAXCLIENTS;i++){
+		if(clients[i].FD>0)
+			clientDisconnect(epFD,&clients[i],ctx);
+	}
+    if(FD){
+		epoll_ctl(epFD,EPOLL_CTL_DEL,FD,NULL);
+		close(FD);
+	}
+	if(ctx)
+    	SSL_CTX_free(ctx);
+	if(epFD)
+		close(epFD);
+	INFO("server terminated gracefully");
     return 0;
 }

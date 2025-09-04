@@ -79,13 +79,15 @@ static int receiveData(SSL_CTX* ctx,SSL* ssl){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
         if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
         	return 0;
-		if(error_code==SSL_ERROR_SSL)
+		if(error_code==SSL_ERROR_SSL||error_code==SSL_ERROR_ZERO_RETURN)
 			return -1;
         SSLErrorVerbose(ssl,"SSL_read",bytes_read);
 		return 0;
 	}
-    msg[bytes_read]=0;
+	if(send_nickname&&msg[0]!=TYPESERVER)
+		return 0;
 
+    msg[bytes_read]=0;
     printf(CLEARLINE CURSORSTART);
 	if(msg[0]==TYPESERVER)
 		SERVER("%s",&msg[1]); 
@@ -213,7 +215,7 @@ int main(int argc,char** argv){
             if(events[i].data.fd==STDIN_FILENO){
                 if(handleInput(ctx,ssl)==-1)
 					goto shutdown;
-			}else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)&&!send_nickname){
+			}else if(events[i].data.fd==FD&&(events[i].events&EPOLLIN)){
                 if(receiveData(ctx,ssl)==-1){
 					server_quit=1;
 					goto shutdown;
@@ -225,7 +227,7 @@ int main(int argc,char** argv){
 shutdown:
 	printf(CLEARLINE CURSORSTART);
 	if(server_quit)
-		ERROR("server quit");
+		INFO("server quit");
 	else
 		CMD("quit");
 	SSL_shutdown(ssl);
