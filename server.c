@@ -55,6 +55,12 @@ static void sendToOthers(const char* msg,const ClientSocket* senderSocket){
         }
     }
 }
+
+static void sendBack(const char* msg,const ClientSocket* senderSocket){
+	const ssize_t bytes_write=SSL_write(senderSocket->ssl,msg,(int)strlen(msg));
+	if(bytes_write<=0)
+		SSLErrorVerbose(senderSocket->ssl,"SSL_write",(int)bytes_write);
+}
 // SEND DATA
 
 // HANDLE CLIENTS
@@ -110,10 +116,36 @@ static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,C
 // HANDLE CLIENTS
 
 // RECEIVE DATA
+static void specialMessage(const uint8_t byte,ClientSocket* clientSocket){
+	if(byte==BYTEONLINE){
+		char online[NICKLEN*MAXCLIENTS+MAXCLIENTS*2+11]={0};
+		online[0]=TYPESERVER;
+		char* ptr=&online[1];
+
+		for(int i=0;i<MAXCLIENTS;i++){
+			if(clients[i].FD>0&&clients[i].FD!=clientSocket->FD&&clients[i].nickname[0]!=0){
+				const size_t sz=strlen(clients[i].nickname);
+				memcpy(ptr,clients[i].nickname,sz);
+				ptr+=sz;
+				*ptr++=',';
+				*ptr++=' ';
+			}
+		}
+
+		if(ptr>&online[1]){
+			ptr-=2;
+			strcpy(ptr," are online");
+		}else
+			strcpy(ptr,"none online");
+
+		sendBack(online,clientSocket);
+	}
+}
+
 static void receiveData(const int epFD,ClientSocket* clientSocket){
     char msg[MSGLEN]={0};
     SSL* ssl=clientSocket->ssl;
-	const int accept_nickname=clientSocket->nickname[0]==0;
+	const uint8_t accept_nickname=clientSocket->nickname[0]==0;
 
 	ssize_t bytes_read=SSL_read(ssl,msg,accept_nickname?NICKLEN-1:MSGLEN-1);
 	if(bytes_read<=0){
@@ -131,7 +163,7 @@ static void receiveData(const int epFD,ClientSocket* clientSocket){
 	//sanitize
 
 	if(accept_nickname){
-		strncpy(clientSocket->nickname,msg,NICKLEN-1);
+		memcpy(clientSocket->nickname,msg,NICKLEN-1);
 		clientSocket->nickname[NICKLEN-1]=0;
 
 		char new_client[MSGLEN]={0};
@@ -140,6 +172,11 @@ static void receiveData(const int epFD,ClientSocket* clientSocket){
 		new_client[strlen(new_client)]=0;
 		sendToOthers(new_client,clientSocket);
 	}else{
+		if(bytes_read==1){
+			specialMessage((uint8_t)msg[0],clientSocket);
+			return;
+		}
+
 		char broadcast[BROADCAST]={0};
 		broadcast[0]=TYPECLIENT;
 		snprintf(&broadcast[1],BROADCAST-1,"%s: %s",clientSocket->nickname,msg);
@@ -161,7 +198,7 @@ int main(int argc,char** argv){
     const uint16_t port=validatePort(argv[1]);
     const int FD=createSocket();
     struct sockaddr_in addr={0};
-    const int optval=1;
+    const uint8_t optval=1;
 
     createAddress(&addr,(in_addr_t)0,port);
     if(setsockopt(FD,SOL_SOCKET,SO_REUSEADDR,&optval,sizeof(optval)))
@@ -212,24 +249,11 @@ int main(int argc,char** argv){
         for(int i=0;i<nFDs;i++){
 			//accept
             if(events[i].data.fd==FD){
-                int accepted=0;
                 for(int j=0;j<MAXCLIENTS;j++){
                     if(clients[j].FD==0){
                         memset(&clients[j],0,sizeof(clients[j]));
                         acceptNewClient(epFD,FD,&epollEvent,&clients[j],ctx);
-                        if(clients[j].FD!=0)
-							accepted=1;
                         break;
-                    }
-                }
-                if(accepted==0){ //remove or add SSL+add MAXCLIENTS and instantly return and delete client
-                    struct sockaddr_in dumpAddr;
-                    socklen_t dump_sz=sizeof(dumpAddr);
-                    const int tmpFD=accept(FD,(struct sockaddr*)&dumpAddr,&dump_sz);
-                    if(tmpFD!=-1){
-                        const char* msg="server full!";
-                        write(tmpFD,msg,strlen(msg));
-                        close(tmpFD);
                     }
                 }
                 continue;

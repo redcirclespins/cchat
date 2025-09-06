@@ -5,18 +5,18 @@
 #define CURSORSTART "\r"
 #define CLEARLINE   "\033[2K"
 
-#define CMDFILE      12
-#define CMDONLINE    15
-#define ESC          27
-#define BACKSPACE 	 127
+#define CMDFILE   12
+#define CMDONLINE 15
+#define ESC       27
+#define BACKSPACE 127
 
 #define MAXEVENTS 2
 #define CAPATH NULL
 #define CACERT "cert/cert.pem"
 
 typedef struct epoll_event EpollEvent;
-static int send_nickname=1;
-static int server_quit=0;
+static uint8_t send_nickname=1;
+static uint8_t server_quit=0;
 
 static struct termios origTermios;
 static char g_msg[MSGLEN]={0};
@@ -128,6 +128,12 @@ static int handleInput(SSL* ssl){
 			printf("\b \b");
 			fflush(stdout);
 		}
+	}else if(c==CMDONLINE){
+		const int temp=BYTEONLINE;
+		const int* temp_ptr=&temp;
+		const ssize_t bytes_write=SSL_write(ssl,temp_ptr,1);
+		if(bytes_write<=0)
+			SSLErrorVerbose(ssl,"SSL_write",(int)bytes_write);
 	}else{
 		if(g_msg_len<(send_nickname?(NICKLEN-1):(MSGLEN-1))){
 			g_msg[g_msg_len++]=c;
@@ -135,9 +141,7 @@ static int handleInput(SSL* ssl){
 			fflush(stdout);
 		}
 	}
-	//}else if(c==CMDONLINE){
 	//}else if(c==CMDFILE){
-	//}
 	return 0;
 }
 // SEND DATA
@@ -196,6 +200,7 @@ int main(int argc,char** argv){
         SSLError("SSL_connect",1,ctx);
 	}
 
+	//main flow
 	enableRawMode();
 	atexit(disableRawMode);
     ASCII();
@@ -205,7 +210,6 @@ int main(int argc,char** argv){
 	printf("enter your nickname: ");
 	fflush(stdout);
 
-	//main flow
 	setNonBlocking(FD);
     while(1){
         EpollEvent events[MAXEVENTS];

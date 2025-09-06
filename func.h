@@ -22,6 +22,9 @@
 #define TYPESERVER 0x01
 #define TYPECLIENT 0x02
 
+#define BYTEONLINE 0x01
+#define BYTEFILE   0x02
+
 #define MSGLEN     257 //+\0
 #define NICKLEN    33 //+\0
 #define BROADCAST  (1+MSGLEN-1+2+NICKLEN-1+1) //[TYPE]+%s+": "+%s\0
