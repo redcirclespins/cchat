@@ -8,9 +8,19 @@ void error(const char* msg){
     exit(EXIT_FAILURE);
 }
 
+void errorVerbose(const char* msg){
+    ERRORSTD;
+	fflush(stdout);
+	perror(msg);
+}
+
 void STDError(const char* msg){
     ERROR("%s",msg);
     exit(EXIT_FAILURE);
+}
+
+void STDErrorVerbose(const char* msg){
+    ERROR("%s",msg);
 }
 
 void ERRGetErrorDep(void){ //deprecated!
@@ -19,6 +29,29 @@ void ERRGetErrorDep(void){ //deprecated!
 		const char* err=ERR_error_string(err_code,NULL);
 		ERROR("%s",err);
 	}
+}
+
+void SSLError(const char* msg,const int num,...){
+    va_list args;
+    va_start(args,num);
+
+    if(num==1){
+		SSL_CTX* ctx=va_arg(args,SSL_CTX*);
+		if(ctx)
+			SSL_CTX_free(ctx);
+	}else if(num==2){
+		SSL_CTX* ctx=va_arg(args,SSL_CTX*);
+        SSL* ssl=va_arg(args,SSL*);
+        if(ssl){
+			SSL_shutdown(ssl);
+			SSL_free(ssl);
+		}if(ctx)
+			SSL_CTX_free(ctx);
+    }else
+        STDError("SSLError: invalid usage");
+
+    va_end(args);
+    STDError(msg);
 }
 
 void SSLErrorVerbose(SSL *ssl,const char* func,const int ret){
@@ -71,29 +104,6 @@ void SSLErrorVerbose(SSL *ssl,const char* func,const int ret){
 	char final_err[128]={0};
     snprintf(final_err,sizeof(final_err),"%s:%s",func,errbuf);
     ERROR("%s",final_err);
-}
-
-void SSLError(const char* msg,const int num,...){
-    va_list args;
-    va_start(args,num);
-
-    if(num==1){
-		SSL_CTX* ctx=va_arg(args,SSL_CTX*);
-		if(ctx)
-			SSL_CTX_free(ctx);
-	}else if(num==2){
-		SSL_CTX* ctx=va_arg(args,SSL_CTX*);
-        SSL* ssl=va_arg(args,SSL*);
-        if(ssl){
-			SSL_shutdown(ssl);
-			SSL_free(ssl);
-		}if(ctx)
-			SSL_CTX_free(ctx);
-    }else
-        STDError("SSLError: invalid usage");
-
-    va_end(args);
-    STDError(msg);
 }
 // ERROR HANDLING
 

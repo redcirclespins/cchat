@@ -19,15 +19,20 @@
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 
+//server -> client
 #define TYPESERVER 0x01
 #define TYPECLIENT 0x02
 
-#define BYTEONLINE 0x01
-#define BYTEFILE   0x02
+//client -> server
+#define BYTEMSG    0x04
+#define BYTEONLINE 0x08
+#define BYTEFILE   0x16
 
-#define MSGLEN     257 //+\0
-#define NICKLEN    33 //+\0
+#define MSGLEN     (1+256+1) //[TYPE]+\0
+#define NICKLEN    (1+32+1) //[TYPE]+\0
 #define BROADCAST  (1+MSGLEN-1+2+NICKLEN-1+1) //[TYPE]+%s+": "+%s\0
+
+#define FILEBUF 4096
 
 #define RESET "\033[0m"
 #define RED   "\033[31m"
@@ -40,10 +45,12 @@
 #define CMD(msg,...)    printf("[" GREEN "COMMAND" RESET "] " msg "\n",##__VA_ARGS__)
 
 void error(const char*);
+void errorVerbose(const char*);
 void STDError(const char*);
+void STDErrorVerbose(const char*);
 void ERRGetErrorDep(void); //deprecated!
-void SSLErrorVerbose(SSL*,const char*,const int);
 void SSLError(const char*,const int,...);
+void SSLErrorVerbose(SSL*,const char*,const int);
 uint16_t validatePort(const char*);
 int createSocket(void);
 void createAddress(struct sockaddr_in*,const in_addr_t,const uint16_t);

@@ -1,6 +1,6 @@
 #include "func.h"
 
-#define MAXCLIENTS 2
+#define MAXCLIENTS 3
 #define MAXEVENTS  4
 #define TIMEOUT    1000
 
@@ -28,17 +28,14 @@ static ClientSocket clients[MAXCLIENTS]={0};
 // SSL FUNCS
 static int passwordCallback(char* buf,int size,int rwflag,void* userdata){
 	(void)rwflag;
-
     const char* password=(const char*)userdata;
+	const size_t pass_len=strlen(password);
     if(!password||password[0]==0){
         return 0;
 	}
-
-	const size_t pass_len=strlen(password);
 	if((int)(pass_len+1)>size){
 		return 0;
 	}
-
 	memcpy(buf,password,pass_len);
 	buf[pass_len]=0;
     return (int)pass_len;
@@ -49,17 +46,17 @@ static int passwordCallback(char* buf,int size,int rwflag,void* userdata){
 static void sendToOthers(const char* msg,const ClientSocket* senderSocket){
     for(int i=0;i<MAXCLIENTS;i++){
         if(clients[i].FD&&clients[i].FD!=senderSocket->FD&&clients[i].nickname[0]!=0){
-            const ssize_t bytes_write=SSL_write(clients[i].ssl,msg,(int)strlen(msg));
+            const int bytes_write=SSL_write(clients[i].ssl,msg,(int)strlen(msg));
             if(bytes_write<=0)
-                SSLErrorVerbose(clients[i].ssl,"SSL_write",(int)bytes_write);
+                SSLErrorVerbose(clients[i].ssl,"SSL_write",bytes_write);
         }
     }
 }
 
 static void sendBack(const char* msg,const ClientSocket* senderSocket){
-	const ssize_t bytes_write=SSL_write(senderSocket->ssl,msg,(int)strlen(msg));
+	const int bytes_write=SSL_write(senderSocket->ssl,msg,(int)strlen(msg));
 	if(bytes_write<=0)
-		SSLErrorVerbose(senderSocket->ssl,"SSL_write",(int)bytes_write);
+		SSLErrorVerbose(senderSocket->ssl,"SSL_write",bytes_write);
 }
 // SEND DATA
 
@@ -116,30 +113,58 @@ static void acceptNewClient(const int epFD,const int FD,EpollEvent* epollEvent,C
 // HANDLE CLIENTS
 
 // RECEIVE DATA
-static void specialMessage(const uint8_t byte,ClientSocket* clientSocket){
-	if(byte==BYTEONLINE){
-		char online[NICKLEN*MAXCLIENTS+MAXCLIENTS*2+11]={0};
-		online[0]=TYPESERVER;
-		char* ptr=&online[1];
+static void receiveOnline(ClientSocket* clientSocket){
+	char online[NICKLEN*MAXCLIENTS+MAXCLIENTS*2+11]={0};
+	online[0]=TYPESERVER;
+	char* ptr=&online[1];
 
-		for(int i=0;i<MAXCLIENTS;i++){
-			if(clients[i].FD>0&&clients[i].FD!=clientSocket->FD&&clients[i].nickname[0]!=0){
-				const size_t sz=strlen(clients[i].nickname);
-				memcpy(ptr,clients[i].nickname,sz);
-				ptr+=sz;
-				*ptr++=',';
-				*ptr++=' ';
-			}
+	for(int i=0;i<MAXCLIENTS;i++){
+		if(clients[i].FD>0&&clients[i].FD!=clientSocket->FD&&clients[i].nickname[0]!=0){
+			const size_t sz=strlen(clients[i].nickname);
+			memcpy(ptr,clients[i].nickname,sz);
+			ptr+=sz;
+			*ptr++=',';
+			*ptr++=' ';
 		}
-
-		if(ptr>&online[1]){
-			ptr-=2;
-			strcpy(ptr," are online");
-		}else
-			strcpy(ptr,"none online");
-
-		sendBack(online,clientSocket);
 	}
+
+	if(ptr>&online[1]){
+		ptr-=2;
+		strcpy(ptr," are online");
+	}else
+		strcpy(ptr,"none online");
+
+	sendBack(online,clientSocket);
+}
+
+static void receiveFile(const uint64_t filesize,ClientSocket* clientSocket,const int epFD,SSL* ssl){
+	FILE *fp=fopen("/tmp/file","wb");
+	if(!fp){
+		errorVerbose("fopen");
+		return;
+	}
+
+	char buffer[FILEBUF];
+	uint64_t received=0;
+	while(received<filesize){
+        int bytes_read=SSL_read(ssl,buffer,(filesize-received>(sizeof(buffer)))?(sizeof(buffer)):((int)(filesize-received)));
+		if(bytes_read<=0){
+			int error_code=SSL_get_error(ssl,(int)bytes_read);
+			if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
+				return;
+			if(error_code==SSL_ERROR_ZERO_RETURN){
+				clientDisconnect(epFD,clientSocket);
+				return;
+			}
+			SSLErrorVerbose(ssl,"SSL_read",(int)bytes_read);
+			return;
+		}
+		printf("recved %d bytes: %s\n",bytes_read,buffer);
+        fwrite(buffer,1,(size_t)bytes_read,fp);
+        received+=(uint64_t)bytes_read;
+	}
+
+	fclose(fp);
 }
 
 static void receiveData(const int epFD,ClientSocket* clientSocket){
@@ -147,7 +172,7 @@ static void receiveData(const int epFD,ClientSocket* clientSocket){
     SSL* ssl=clientSocket->ssl;
 	const uint8_t accept_nickname=clientSocket->nickname[0]==0;
 
-	ssize_t bytes_read=SSL_read(ssl,msg,accept_nickname?NICKLEN-1:MSGLEN-1);
+	const int bytes_read=SSL_read(ssl,msg,accept_nickname?NICKLEN-1:MSGLEN-1);
 	if(bytes_read<=0){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
 		if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
@@ -156,7 +181,7 @@ static void receiveData(const int epFD,ClientSocket* clientSocket){
 			clientDisconnect(epFD,clientSocket);
 			return;
 		}
-		SSLErrorVerbose(ssl,"SSL_read",(int)bytes_read);
+		SSLErrorVerbose(ssl,"SSL_read",bytes_read);
 		return;
 	}
 	msg[bytes_read]=0;
@@ -171,17 +196,27 @@ static void receiveData(const int epFD,ClientSocket* clientSocket){
 		snprintf(&new_client[1],MSGLEN-1,"'%s' connected",clientSocket->nickname);
 		new_client[strlen(new_client)]=0;
 		sendToOthers(new_client,clientSocket);
-	}else{
-		if(bytes_read==1){
-			specialMessage((uint8_t)msg[0],clientSocket);
-			return;
-		}
+		return;
+	}
 
+	if(msg[0]==BYTEMSG){
 		char broadcast[BROADCAST]={0};
 		broadcast[0]=TYPECLIENT;
 		snprintf(&broadcast[1],BROADCAST-1,"%s: %s",clientSocket->nickname,msg);
 		broadcast[strlen(broadcast)]=0;
 		sendToOthers(broadcast,clientSocket);
+	}else if(msg[0]==BYTEONLINE)
+		receiveOnline(clientSocket);
+	else if(msg[0]==BYTEFILE){
+		//convert recved 64bits of size from char to uint64_t
+		if(sizeof(msg)<1+sizeof(uint64_t)){
+			STDErrorVerbose("header too short");
+			return;
+		}
+		uint64_t filesize;
+		memcpy(&filesize,&msg[1],sizeof(filesize));
+
+		receiveFile(filesize,clientSocket,epFD,ssl);
 	}
 }
 // RECEIVE DATA
@@ -198,7 +233,7 @@ int main(int argc,char** argv){
     const uint16_t port=validatePort(argv[1]);
     const int FD=createSocket();
     struct sockaddr_in addr={0};
-    const uint8_t optval=1;
+    const int optval=1;
 
     createAddress(&addr,(in_addr_t)0,port);
     if(setsockopt(FD,SOL_SOCKET,SO_REUSEADDR,&optval,sizeof(optval)))

@@ -73,7 +73,7 @@ static in_addr_t validateIp(const char* ip_char){
 // RECEIVE DATA
 static int receiveData(SSL* ssl){
     char msg[BROADCAST]={0};
-    const ssize_t bytes_read=SSL_read(ssl,msg,BROADCAST-1);
+    const int bytes_read=SSL_read(ssl,msg,BROADCAST-1);
 
     if(bytes_read<=0){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
@@ -82,10 +82,10 @@ static int receiveData(SSL* ssl){
 		}else if(error_code==SSL_ERROR_SSL||error_code==SSL_ERROR_ZERO_RETURN){
 			return -1;
 		}
-        SSLErrorVerbose(ssl,"SSL_read",(int)bytes_read);
+        SSLErrorVerbose(ssl,"SSL_read",bytes_read);
 		return 0;
 	}
-	if(send_nickname&&msg[0]!=TYPESERVER)
+	if(send_nickname)
 		return 0;
 
     msg[bytes_read]=0;
@@ -97,7 +97,7 @@ static int receiveData(SSL* ssl){
 	
 	printf(CLEARLINE);
 	printf("--> ");
-    fwrite(g_msg,1,g_msg_len,stdout);
+    fwrite(&g_msg[1],1,g_msg_len,stdout);
     fflush(stdout);
 	return 0;
 }
@@ -109,39 +109,100 @@ static int handleInput(SSL* ssl){
 	if(read(STDIN_FILENO,&c,1)<=0)
 		return 0;
 
-	if(c=='\n'){
-		if(g_msg_len>0){
-			const ssize_t bytes_write=SSL_write(ssl,g_msg,(int)g_msg_len);
-			if(bytes_write<=0)
-				SSLErrorVerbose(ssl,"SSL_write",(int)bytes_write);
-			g_msg_len=0;
-		}
+	if(c==ESC)
+		return -1;
+	else if(c=='\n'){
+		if(!g_msg_len)
+			return 0;
 
+		g_msg[0]=BYTEMSG;
+		const int bytes_write=SSL_write(ssl,g_msg,(int)(g_msg_len+1));
+		if(bytes_write<=0)
+			SSLErrorVerbose(ssl,"SSL_write",bytes_write);
+
+		memset(g_msg,0,g_msg_len);
+		g_msg_len=0;
 		printf("\n--> ");
 		fflush(stdout);
 		send_nickname=0;
-	}else if(c==ESC)
-		return -1;
-	else if(c==BACKSPACE){
-		if(g_msg_len>0){
-			g_msg_len--;
-			printf("\b \b");
-			fflush(stdout);
-		}
+
+	}else if(c==BACKSPACE){
+		if(!g_msg_len)
+			return 0;
+
+		g_msg_len--;
+		printf("\b \b");
+		fflush(stdout);
+
 	}else if(c==CMDONLINE){
+
 		const int temp=BYTEONLINE;
 		const int* temp_ptr=&temp;
-		const ssize_t bytes_write=SSL_write(ssl,temp_ptr,1);
+		const int bytes_write=SSL_write(ssl,temp_ptr,1);
 		if(bytes_write<=0)
-			SSLErrorVerbose(ssl,"SSL_write",(int)bytes_write);
+			SSLErrorVerbose(ssl,"SSL_write",bytes_write);
+
+	}else if(c==CMDFILE){
+		if(!g_msg_len)
+			return 0;
+
+		putchar('\n');
+		FILE* fp=fopen(&g_msg[1],"rb");
+		if(fp==NULL){
+			errorVerbose("fopen");
+			goto no_such_file;
+		}
+
+		//send file size
+		fseek(fp,0,SEEK_END);
+		const uint64_t filesize=(uint64_t)ftell(fp);
+		fseek(fp,0,SEEK_SET);
+
+		unsigned char header[1+sizeof(filesize)];
+		header[0]=BYTEFILE;
+		memcpy(&header[1],&filesize,sizeof(filesize));
+
+		const int bytes_write1=SSL_write(ssl,header,sizeof(header));
+		if(bytes_write1<=0){
+			SSLErrorVerbose(ssl,"SSL_write",bytes_write1);
+			fclose(fp);
+			return 0;
+		}
+
+		//send the file
+		char buffer[FILEBUF];
+		size_t bytes_read;
+		while((bytes_read=fread(buffer,1,sizeof(buffer),fp))>0){
+			size_t total_sent=0;
+			while(total_sent<bytes_read){
+				const int bytes_write2=SSL_write(ssl,buffer+total_sent,(int)(bytes_read-total_sent));
+				if(bytes_write2<=0){
+					SSLErrorVerbose(ssl,"SSL_write",bytes_write2);
+					fclose(fp);
+					return 0;
+				}
+				total_sent+=(size_t)bytes_write2;
+			}
+		}
+		fclose(fp);
+		INFO("sent '%s' (%llu bytes)",&g_msg[1],(unsigned long long)filesize);
+
+no_such_file:
+		memset(g_msg,0,sizeof(g_msg));
+		g_msg_len=0;
+		printf("--> ");
+		fflush(stdout);
+
 	}else{
-		if(g_msg_len<(send_nickname?(NICKLEN-1):(MSGLEN-1))){
-			g_msg[g_msg_len++]=c;
+
+		if(g_msg_len+1<(send_nickname?(NICKLEN-1):(MSGLEN-1))){
+			g_msg[g_msg_len+1]=c;
+			g_msg_len++;
 			fwrite(&c,1,1,stdout);
 			fflush(stdout);
 		}
+
 	}
-	//}else if(c==CMDFILE){
 	return 0;
 }
 // SEND DATA
