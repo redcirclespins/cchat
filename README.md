@@ -11,7 +11,7 @@
 - OpenSSL
 
 ```
-sudo apt update;sudo apt install gcc make openssl
+sudo apt update;sudo apt install gcc make openssl libssl-dev
 ```
 
 ## CERTIFICATES
