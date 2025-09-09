@@ -147,9 +147,10 @@ static void receiveFile(const uint64_t filesize,ClientSocket* clientSocket,const
 	char buffer[FILEBUF];
 	uint64_t received=0;
 	while(received<filesize){
-        int bytes_read=SSL_read(ssl,buffer,(filesize-received>(sizeof(buffer)))?(sizeof(buffer)):((int)(filesize-received)));
+		const size_t chunk=(filesize-received>sizeof(buffer))?sizeof(buffer):(size_t)(filesize-received);
+        const int bytes_read=SSL_read(ssl,buffer,(int)chunk);
 		if(bytes_read<=0){
-			int error_code=SSL_get_error(ssl,(int)bytes_read);
+			const int error_code=SSL_get_error(ssl,(int)bytes_read);
 			if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
 				return;
 			if(error_code==SSL_ERROR_ZERO_RETURN){
@@ -213,7 +214,7 @@ static void receiveData(const int epFD,ClientSocket* clientSocket){
 			STDErrorVerbose("header too short");
 			return;
 		}
-		uint64_t filesize;
+		uint64_t filesize=0;
 		memcpy(&filesize,&msg[1],sizeof(filesize));
 
 		receiveFile(filesize,clientSocket,epFD,ssl);
