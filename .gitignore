@@ -3,7 +3,8 @@ server
 client
 
 # Folders
-*cert*/
+cert*/
+uploads*/
 
 # Certificates
 *.pem

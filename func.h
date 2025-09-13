@@ -22,17 +22,19 @@
 //server -> client
 #define TYPESERVER 0x01
 #define TYPECLIENT 0x02
+#define TYPEERROR  0x03
+#define TYPEFILE   0x04
 
 //client -> server
-#define BYTEMSG    0x04
-#define BYTEONLINE 0x08
-#define BYTEFILE   0x16
+#define BYTEMSG    0x01
+#define BYTEONLINE 0x02
+#define BYTEFILE   0x03
 
-#define MSGLEN     (1+256+1) //[TYPE]+\0
-#define NICKLEN    (1+32+1) //[TYPE]+\0
-#define BROADCAST  (1+MSGLEN-1+2+NICKLEN-1+1) //[TYPE]+%s+": "+%s\0
-
-#define FILEBUF 4096
+#define FILENAMELEN 256
+#define NICKLEN     33 //+1 for [BYTE]
+#define MSGLEN      257 //+1 for [BYTE]
+#define FILEBUF     4096
+#define BROADCAST   MSGLEN+NICKLEN-1 //-1 for [BYTE]
 
 #define RESET "\033[0m"
 #define RED   "\033[31m"

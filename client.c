@@ -5,7 +5,7 @@
 #define CURSORSTART "\r"
 #define CLEARLINE   "\033[2K"
 
-#define CMDFILE   12
+#define CMDFILE   6
 #define CMDONLINE 15
 #define ESC       27
 #define BACKSPACE 127
@@ -71,17 +71,58 @@ static in_addr_t validateIp(const char* ip_char){
 // SOCKET FUNCS
 
 // RECEIVE DATA
+static int receiveFile(const uint64_t filesize,const char* filename,SSL* ssl){
+	char filename_final[9+MSGLEN]="uploads/";
+	strcat(filename_final,filename);
+	filename_final[9+MSGLEN-1]=0;
+	FILE *fp=fopen(filename_final,"wb");
+	if(!fp){
+		errorVerbose("fopen");
+		return 0;
+	}
+
+	char buffer[FILEBUF];
+	uint64_t received=0;
+	size_t bytes_total=0;
+	while(received<filesize){
+		const size_t chunk=(filesize-received>sizeof(buffer))?sizeof(buffer):(size_t)(filesize-received);
+		const int bytes_read=SSL_read(ssl,buffer,(int)chunk);
+		if(bytes_read<=0){
+			const int error_code=SSL_get_error(ssl,(int)bytes_read);
+			if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
+				return 0;
+			if(error_code==SSL_ERROR_ZERO_RETURN)
+				return -1;
+			SSLErrorVerbose(ssl,"SSL_read",(int)bytes_read);
+			return 0;
+		}
+		for (size_t i = 0;i<(size_t)bytes_read; i++) {
+			printf("%02x ", buffer[i]); // Print each byte in hexadecimal
+		}
+		printf("\n");
+
+		bytes_total+=(size_t)bytes_read;
+    	printf(CLEARLINE CURSORSTART);
+		printf("received %zu bytes: %s",bytes_total,buffer);
+        fwrite(buffer,1,(size_t)bytes_read,fp);
+        received+=(uint64_t)bytes_read;
+	}
+	printf(". saved to file: %s\n",filename_final);
+
+	fclose(fp);
+	return 0;
+}
+
 static int receiveData(SSL* ssl){
-    char msg[BROADCAST]={0};
-    const int bytes_read=SSL_read(ssl,msg,BROADCAST-1);
+    char msg[FILEBUF]={0};
+    const int bytes_read=SSL_read(ssl,msg,FILEBUF-1);
 
     if(bytes_read<=0){
 		int error_code=SSL_get_error(ssl,(int)bytes_read);
-        if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE){
+        if(error_code==SSL_ERROR_WANT_READ||error_code==SSL_ERROR_WANT_WRITE)
         	return 0;
-		}else if(error_code==SSL_ERROR_SSL||error_code==SSL_ERROR_ZERO_RETURN){
+		else if(error_code==SSL_ERROR_SSL||error_code==SSL_ERROR_ZERO_RETURN)
 			return -1;
-		}
         SSLErrorVerbose(ssl,"SSL_read",bytes_read);
 		return 0;
 	}
@@ -94,6 +135,26 @@ static int receiveData(SSL* ssl){
 		SERVER("%s",&msg[1]); 
 	else if(msg[0]==TYPECLIENT)
 		printf("%s\n",&msg[1]); 
+	else if(msg[0]==TYPEERROR)
+		ERROR("%s\n",&msg[1]); 
+	else if(msg[0]==TYPEFILE){
+		for (size_t i = 0; i < sizeof(msg); i++) {
+			printf("%02x ", msg[i]); // Print each byte in hexadecimal
+		}
+		printf("\n");
+
+		uint64_t filesize=0;
+		const size_t filesize_sz=sizeof(filesize);
+		char* ptr=&msg[1];
+		memcpy(&filesize,ptr,sizeof(filesize));
+		ptr+=filesize_sz;
+		char filename[strlen(ptr)+1];
+		strncpy(filename,ptr,strlen(ptr));
+		filename[strlen(ptr)]=0;
+
+		if(receiveFile(filesize,filename,ssl)==-1)
+			return -1;
+	}
 	
 	printf(CLEARLINE);
 	printf("--> ");
@@ -120,7 +181,7 @@ static int handleInput(SSL* ssl){
 		if(bytes_write<=0)
 			SSLErrorVerbose(ssl,"SSL_write",bytes_write);
 
-		memset(g_msg,0,g_msg_len);
+		memset(g_msg,0,sizeof(g_msg));
 		g_msg_len=0;
 		printf("\n--> ");
 		fflush(stdout);
@@ -150,17 +211,29 @@ static int handleInput(SSL* ssl){
 		FILE* fp=fopen(&g_msg[1],"rb");
 		if(fp==NULL){
 			errorVerbose("fopen");
-			goto no_such_file;
+			memset(g_msg,0,sizeof(g_msg));
+			g_msg_len=0;
+			printf("--> ");
+			fflush(stdout);
+			return 0;
 		}
 
-		//send file size
+		//send header
 		fseek(fp,0,SEEK_END);
 		const uint64_t filesize=(uint64_t)ftell(fp);
+		const size_t filesize_sz=sizeof(uint64_t);
 		fseek(fp,0,SEEK_SET);
 
-		unsigned char header[1+sizeof(filesize)];
+		const char* filename=strrchr(&g_msg[1],'/');
+		if(filename)
+			filename++;
+		else
+			filename=&g_msg[1];
+
+		char header[1+filesize_sz+FILENAMELEN];
 		header[0]=BYTEFILE;
-		memcpy(&header[1],&filesize,sizeof(filesize));
+		memcpy(&header[1],&filesize,filesize_sz);
+		memcpy(&header[1+filesize_sz],filename,FILENAMELEN);
 
 		const int bytes_write1=SSL_write(ssl,header,sizeof(header));
 		if(bytes_write1<=0){
@@ -187,7 +260,6 @@ static int handleInput(SSL* ssl){
 		fclose(fp);
 		INFO("sent '%s' (%llu bytes)",&g_msg[1],(unsigned long long)filesize);
 
-no_such_file:
 		memset(g_msg,0,sizeof(g_msg));
 		g_msg_len=0;
 		printf("--> ");
@@ -195,7 +267,7 @@ no_such_file:
 
 	}else{
 
-		if(g_msg_len+1<(send_nickname?(NICKLEN-1):(MSGLEN-1))){
+		if(g_msg_len+1<(send_nickname?NICKLEN:MSGLEN)){
 			g_msg[g_msg_len+1]=c;
 			g_msg_len++;
 			fwrite(&c,1,1,stdout);
@@ -243,7 +315,7 @@ int main(int argc,char** argv){
     if(ctx==NULL){
         STDError("SSL_CTX_new");
 	}
-	SSL_CTX_set_min_proto_version(ctx,TLS1_2_VERSION);
+	SSL_CTX_set_min_proto_version(ctx,TLS1_3_VERSION);
     SSL_CTX_set_verify(ctx,SSL_VERIFY_PEER,NULL);
     SSL_CTX_set_verify_depth(ctx,5);
     if(SSL_CTX_load_verify_locations(ctx,CACERT,CAPATH)==0)

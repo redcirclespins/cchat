@@ -52,6 +52,7 @@ before running client you should:
 1. ```mkdir cert```
 2. copy the *cert.pem* inside the cert directory
 3. ensure the user that will run the client side has read permissions to the file *cert.pem*
+4. to enable functionality of file transfer you should ```mkdir uploads``` in the base dir of cchat
 
 ```
 usage: ./client <server-PUBLIC-ip-address> <port>
@@ -60,8 +61,9 @@ usage: ./client <server-PUBLIC-ip-address> <port>
 ## FEATURES
 
 - straightforward source code
-- TLS up to 1.3 via OpenSSL
+- TLS_1_3 via OpenSSL
 - clean chat interface
+- file transfer
 
 ## COMING SOON
 
